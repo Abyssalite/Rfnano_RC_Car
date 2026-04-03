@@ -1,1 +1,1 @@
-avrdude -c usbasp -P /dev/ttyUSB0 -B 200 -p m48 -U flash:w:sketch_nov29c.ino_atmega48_8000000L.hex:i
+avrdude -c usbasp -P /dev/ttyUSB0 -B 200 -p m48 -U flash:w:sketch_nov29c.ino.hex:i

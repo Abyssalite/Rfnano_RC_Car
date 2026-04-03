@@ -32,7 +32,7 @@ struct ReceivePayload {
     int8_t joystick2[2];
     uint8_t digitalButton[6];
     uint8_t analogButton;
-    uint8_t batt;
+    //uint8_t batt;
 };
 ReceivePayload receivePayload;
 
@@ -56,7 +56,7 @@ uint16_t masterCallInt(uint8_t func, const uint8_t* args = nullptr, uint8_t len 
   if (args && len > 0) Wire.write(args, len);
   Wire.endTransmission();
 
-  if (Wire.requestFrom((uint8_t)SLAVE_ADDR, (uint8_t)2) != 2) return 2254;
+  if (Wire.requestFrom((uint8_t)SLAVE_ADDR, (uint8_t)2) != 2) return 30054;
 
   uint16_t value;
   Wire.readBytes((uint8_t*)&value, 2);
@@ -64,7 +64,7 @@ uint16_t masterCallInt(uint8_t func, const uint8_t* args = nullptr, uint8_t len 
   return value;
 }
 
-// 8-int return
+// 8-byte array return
 uint8_t masterCallIntArray(uint8_t func, const uint8_t* args = nullptr, uint8_t len = 0, uint8_t* results = nullptr, uint8_t resultslen = 0) {
   Wire.beginTransmission((uint8_t)SLAVE_ADDR);
   Wire.write(func);
@@ -107,6 +107,63 @@ void moveFordward(int speed){
   motor(REAR_RIGHT[0],REAR_RIGHT[1],speed);
 }
 
+void updateDisplay() {
+  uint8_t buf[2];
+
+  // === 1. Gauges for first 5 analog values (digits 1 to 5) ===
+
+  int gauges[5] = {
+    abs(receivePayload.joystick1[0]) * 3,
+    abs(receivePayload.joystick1[1]) * 3,
+    abs(receivePayload.joystick2[0]) * 3,
+    abs(receivePayload.joystick2[1]) * 3,
+    map(receivePayload.analogButton, 0, 180, 0, 400)
+  };
+
+  for (uint8_t i = 0; i < 5; i++) {
+    // Scale to 0-7 (height of bar)
+    uint8_t level = map(constrain(gauges[i], 0, 400), 0, 400, 0, 7);
+
+    uint8_t pattern = 0;
+    if (level >= 1) pattern |= 0b1000000; 
+    if (level >= 2) pattern |= 0b0000010;
+    if (level >= 3) pattern |= 0b0000100; 
+    if (level >= 4) pattern |= 0b0001000; 
+    if (level >= 5) pattern |= 0b0010000; 
+    if (level >= 6) pattern |= 0b0100000; 
+    if (level >= 7) pattern |= 0b0000001; 
+
+    buf[0] = i + 1;           // digit position 0..4
+    buf[1] = pattern;
+    masterCallInt(1, buf, 2);
+  }
+
+  // === 2. Vertical lines for digital buttons (digits 6,7,8) ===
+  // Show 6 buttons as simple on/off vertical line
+  
+  uint8_t btns[6] = {
+    receivePayload.digitalButton[0],
+    receivePayload.digitalButton[1],
+    receivePayload.digitalButton[2],
+    receivePayload.digitalButton[3],
+    receivePayload.digitalButton[4],
+    receivePayload.digitalButton[5]
+  };
+
+  for (uint8_t i = 0; i < 3; i++) {
+    uint8_t pattern = 0x00;
+
+    if (btns[i] == 0)
+      pattern |= 0b0110000;
+    if (btns[i + 3] == 0)
+      pattern |= 0b0000110;
+
+    buf[0] = i + 6;       // digits 5,6,7
+    buf[1] = pattern;
+    masterCallInt(1, buf, 2);
+  }
+}
+
 void setup() {  
   Serial.begin(9600);
   Wire.begin();
@@ -125,7 +182,7 @@ void setup() {
   radio.startListening();               // start in RX mode
   Serial.println(F("Bidirectional node ready"));
 
-  Serial.println(mpu.begin(MPU6050_SCALE_2000DPS, MPU6050_RANGE_2G));
+  mpu.begin(MPU6050_SCALE_2000DPS, MPU6050_RANGE_2G);
   // Calibrate gyroscope. The calibration must be at rest.
   mpu.calibrateGyro();
   mpu.setThreshold(3);
@@ -145,8 +202,11 @@ void setup() {
   SoftPWMSet(A2, 0);
   SoftPWMSet(A3, 0);
 
-  masterCallInt(2, B(0, 1, 3), 3);
-  masterCallInt(2, B(1, 0, 2), 3);
+  masterCallInt(2, B(0, 1, 3), 3); // set INPUT US
+  masterCallInt(2, B(1, 0, 2), 3); // set OUTPUT US
+  masterCallInt(2, B(1, 4, 8, 7), 4); // set OUTPUT 7seg
+  masterCallInt(1, 1, 1); // Init 7seg
+
   masterCallInt(8, B(5, 6), 2);
 }
 
@@ -155,37 +215,14 @@ void loop() {
   if (radio.available()) {
     radio.read(&receivePayload, sizeof(receivePayload));
     
-    Serial.print(receivePayload.joystick1[0]);
-    Serial.print(" ");
-    Serial.print(receivePayload.joystick1[1]);
-    Serial.print(" ");
-    Serial.print(receivePayload.joystick2[0]);
-    Serial.print(" ");
-    Serial.print(receivePayload.joystick2[1]);
-    Serial.print(" ");
-    Serial.print(map(receivePayload.analogButton, 0, 255, 0, 600));
-    Serial.print(" ");
-    Serial.print(map(receivePayload.batt, 0, 255, 0, 1023));
-    Serial.print(" ");
-
-    Serial.print(receivePayload.digitalButton[0]);
-    Serial.print(" ");
-    Serial.print(receivePayload.digitalButton[1]);
-    Serial.print(" ");
-    Serial.print(receivePayload.digitalButton[2]);
-    Serial.print(" ");
-    Serial.print(receivePayload.digitalButton[3]);
-    Serial.print(" ");
-    Serial.print(receivePayload.digitalButton[4]);
-    Serial.print(" ");
-    Serial.println(receivePayload.digitalButton[5]);
+    updateDisplay(); 
   }
 
   const uint16_t sensors[3] = {sensor.read(), masterCallInt(7, B(0,1), 2), masterCallInt(7, B(2,3), 2)};
   uint8_t values[8];
   masterCallIntArray(5, B(10, 11, 12, 13, 14, 15, 16, 17), 8, values, sizeof(values));
 
-unsigned long now = millis();
+  unsigned long now = millis();
   if (now - gyroTimer >= GYRO_PERIOD){
       gyroTimer = now;
       Vector norm = mpu.readNormalizeGyro();
@@ -229,9 +266,6 @@ unsigned long now = millis();
     sendPayload.batt = map(analogRead(A6), 0, 1023, 0, 255);
 
     bool ok = radio.write(&sendPayload, sizeof(sendPayload));
-
-    //Serial.print(F("Sent"));
-    //Serial.println(ok ? F(" → OK") : F(" → FAILED"));
 
     radio.startListening();             // back to RX mode
   }
