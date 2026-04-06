@@ -4,6 +4,8 @@
 
 Servo servo1;
 Servo servo2;
+Servo led;
+
 #define DIN 7
 #define CLK 4
 #define CS 8
@@ -72,8 +74,6 @@ void maxInit() {
   maxWrite(0x0A, 7);   // intensity
 }
 
-
-
 void getUltrasonicDistance() {
   digitalWrite(args[0], 0);
   delayMicroseconds(2);
@@ -88,7 +88,7 @@ void getUltrasonicDistance() {
 void switchFunction(uint8_t* functionId) {
 
   switch (*functionId) {
-    case 1:
+    case 10:
       {
         if (argCount == 1)
           maxInit();
@@ -140,9 +140,10 @@ void switchFunction(uint8_t* functionId) {
 
     case 8:
       {  // attach servo
-          if (argCount == 2) {
+          if (argCount == 3) {
             servo1.attach(args[0]);
             servo2.attach(args[1]);
+            led.attach(args[2]);
           }
 
         break;
@@ -150,9 +151,10 @@ void switchFunction(uint8_t* functionId) {
 
     case 9:
       {  // control servo
-        if (argCount == 2) {
+        if (argCount == 3) {
           servo1.write(args[0]);
           servo2.write(args[1]);
+          led.attach(args[2]);
         }
 
         break;

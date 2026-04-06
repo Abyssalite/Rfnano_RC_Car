@@ -2,7 +2,7 @@
 #include <RF24.h>
 #include <U8g2lib.h>
 
-U8G2_SSD1309_128X64_NONAME0_F_HW_I2C u8g2(U8G2_R0, /* reset=*/ U8X8_PIN_NONE);
+U8G2_SSD1309_128X64_NONAME0_1_HW_I2C u8g2(U8G2_R0, /* reset=*/ U8X8_PIN_NONE);
 
 #define CE_PIN  10
 #define CSN_PIN  9
@@ -18,7 +18,6 @@ struct SendPayload {
     int8_t joystick2[2];
     uint8_t digitalButton[6];
     uint8_t analogButton;
-    //uint8_t batt;
 };
 SendPayload sendPayload;
 
@@ -32,9 +31,8 @@ struct ReceivePayload {
 ReceivePayload receivePayload;
 
 void updateDisplay() {
-    // === Display on OLED instead of (or in addition to) Serial ===
-    u8g2.clearBuffer();
-
+  u8g2.firstPage();                    // Start page mode
+  do {
     // Line 1: Distance sensors
     u8g2.setCursor(0, 12);
     u8g2.print("Dist: ");
@@ -53,7 +51,7 @@ void updateDisplay() {
     u8g2.print(" ");
     u8g2.print(receivePayload.gyro[2]);
 
-    // Line 3: Battery (mapped roughly to voltage)
+    // Line 3: Battery
     u8g2.setCursor(0, 36);
     u8g2.print("Batt: ");
     u8g2.print(map(receivePayload.batt, 0, 255, 0, 1023));
@@ -68,7 +66,7 @@ void updateDisplay() {
     u8g2.print(receivePayload.digitalIR[2]);
     u8g2.print(receivePayload.digitalIR[3]);
 
-    // Line 5: Analog IR (bottom)
+    // Line 5: Analog IR
     u8g2.setCursor(0, 60);
     u8g2.print("AnIR: ");
     u8g2.print(receivePayload.analogIR[0]);
@@ -79,7 +77,7 @@ void updateDisplay() {
     u8g2.print(" ");
     u8g2.print(receivePayload.analogIR[3]);
 
-    u8g2.sendBuffer();
+  } while (u8g2.nextPage());           // Render page by page
 }
 
 void setup() {
@@ -93,10 +91,11 @@ void setup() {
   pinMode(7, INPUT_PULLUP);
   pinMode(8, INPUT_PULLUP);
 
-  // Initialize OLED
+  // Initialize OLED - Page mode
   u8g2.begin();
-  u8g2.setFont(u8g2_font_6x10_tf);     // Small readable font
+  u8g2.setFont(u8g2_font_6x10_tf);
 
+  // Low brightness settings
   u8g2.setContrast(30);
   u8g2.sendF("c", 0xD9, 0x22); 
   u8g2.sendF("c", 0xDB, 0x00);
@@ -109,35 +108,34 @@ void setup() {
 
   radio.openWritingPipe(address);
   radio.openReadingPipe(1, address);
-
   radio.startListening();
 
-  Serial.println(F("Bidirectional node + OLED ready"));
-  
-  // Welcome message on OLED
-  u8g2.clearBuffer();
-  u8g2.drawStr(0, 12, "RF Node Ready");
-  u8g2.sendBuffer();
+    u8g2.firstPage();                    // Start page mode
+  do {
+    u8g2.setCursor(0, 36);
+    u8g2.print("Batt: ");
+    u8g2.print(analogRead(A7));
+
+  } while (u8g2.nextPage());           // Render page by page
 }
 
 void loop() {
   // 1. RECEIVE PART
   if (radio.available()) {
     radio.read(&receivePayload, sizeof(receivePayload));
-
     updateDisplay();
   }
 
-  // 2. TRANSMIT PART (unchanged)
+  // 2. TRANSMIT PART
   unsigned long now = millis();
   if (now - rfTimer >= RF_PERIOD) {
     rfTimer = now;
     radio.stopListening();
 
-    sendPayload.joystick1[0] = map(analogRead(A0), 0, 884, 0, 255) - 124;
-    sendPayload.joystick1[1] = map(analogRead(A1), 0, 884, 0, 255) - 128;
-    sendPayload.joystick2[0] = map(analogRead(A2), 0, 884, 0, 255) - 126;
-    sendPayload.joystick2[1] = map(analogRead(A3), 0, 884, 0, 255) - 129;
+    sendPayload.joystick1[0] = map(analogRead(A0), 0, 884, -127, 127);
+    sendPayload.joystick1[1] = map(analogRead(A1), 0, 884, -127, 127);
+    sendPayload.joystick2[0] = map(analogRead(A2), 0, 884, -127, 127);
+    sendPayload.joystick2[1] = map(analogRead(A3), 0, 884, -127, 127);
 
     sendPayload.digitalButton[0] = digitalRead(0);
     sendPayload.digitalButton[1] = digitalRead(2);
@@ -146,11 +144,9 @@ void loop() {
     sendPayload.digitalButton[4] = digitalRead(7);
     sendPayload.digitalButton[5] = digitalRead(8);
 
-    sendPayload.analogButton = map(analogRead(A6), 0, 600, 0, 255);
-    //sendPayload.batt = map(analogRead(A7), 0, 1023, 0, 255);
+    sendPayload.analogButton = map(analogRead(A6), 0, 680, 0, 130);
 
     radio.write(&sendPayload, sizeof(sendPayload));
-
     radio.startListening();
   }
 }

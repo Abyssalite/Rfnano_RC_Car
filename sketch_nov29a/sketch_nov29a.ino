@@ -5,9 +5,12 @@
 #include <SoftPWM.h>
 #include <MPU6050.h>
 #include <VL53L1X.h>
+#include <VL53L0X.h>
 
 #define CE_PIN  10
 #define CSN_PIN  9
+#define XSHUT_LEFT  6
+#define XSHUT_RIGHT  5
 RF24 radio(CE_PIN, CSN_PIN);
 
 const byte address[6] = "1Node";          // Same address on BOTH boards
@@ -36,7 +39,10 @@ struct ReceivePayload {
 };
 ReceivePayload receivePayload;
 
-VL53L1X sensor;
+VL53L1X sensorFront;
+VL53L0X sensorRight;
+VL53L0X sensorLeft;
+
 MPU6050 mpu;
 unsigned long gyroTimer = 0;
 const uint8_t GYRO_PERIOD = 10;   // 100 Hz
@@ -82,10 +88,10 @@ uint8_t masterCallIntArray(uint8_t func, const uint8_t* args = nullptr, uint8_t 
   return 0;
 }
 
-void motor(int pin1, int pin2, int& speed) {
+void motor(uint8_t pin1, uint8_t pin2, int8_t& speed) {
   speed = map(speed, -126, 126, -100, 100);
   speed = constrain(speed, -100, 100);
-
+ 
   if (speed > 10) {
     SoftPWMSetPercent(pin2, 0);
     SoftPWMSetPercent(pin1, speed);
@@ -100,7 +106,7 @@ void motor(int pin1, int pin2, int& speed) {
   }
 }
 
-void moveFordward(int speed){
+void moveFordward(int8_t speed){
   motor(FRONT_LEFT[0],FRONT_LEFT[1],speed);
   motor(FRONT_RIGHT[0],FRONT_RIGHT[1],speed);
   motor(REAR_LEFT[0],REAR_LEFT[1],speed);
@@ -112,17 +118,17 @@ void updateDisplay() {
 
   // === 1. Gauges for first 5 analog values (digits 1 to 5) ===
 
-  int gauges[5] = {
-    abs(receivePayload.joystick1[0]) * 3,
-    abs(receivePayload.joystick1[1]) * 3,
-    abs(receivePayload.joystick2[0]) * 3,
-    abs(receivePayload.joystick2[1]) * 3,
-    map(receivePayload.analogButton, 0, 180, 0, 400)
+  int8_t gauges[5] = {
+    abs(receivePayload.joystick1[0]),
+    abs(receivePayload.joystick1[1]),
+    abs(receivePayload.joystick2[0]),
+    abs(receivePayload.joystick2[1]),
+    receivePayload.analogButton
   };
 
   for (uint8_t i = 0; i < 5; i++) {
     // Scale to 0-7 (height of bar)
-    uint8_t level = map(constrain(gauges[i], 0, 400), 0, 400, 0, 7);
+    uint8_t level = map(constrain(gauges[i], 0, 130), 0, 130, 0, 6);
 
     uint8_t pattern = 0;
     if (level >= 1) pattern |= 0b1000000; 
@@ -131,11 +137,10 @@ void updateDisplay() {
     if (level >= 4) pattern |= 0b0001000; 
     if (level >= 5) pattern |= 0b0010000; 
     if (level >= 6) pattern |= 0b0100000; 
-    if (level >= 7) pattern |= 0b0000001; 
 
     buf[0] = i + 1;           // digit position 0..4
     buf[1] = pattern;
-    masterCallInt(1, buf, 2);
+    masterCallInt(10, buf, 2);
   }
 
   // === 2. Vertical lines for digital buttons (digits 6,7,8) ===
@@ -160,11 +165,16 @@ void updateDisplay() {
 
     buf[0] = i + 6;       // digits 5,6,7
     buf[1] = pattern;
-    masterCallInt(1, buf, 2);
+    masterCallInt(10, buf, 2);
   }
 }
 
 void setup() {  
+  pinMode(XSHUT_LEFT, OUTPUT);
+  pinMode(XSHUT_RIGHT, OUTPUT);
+  digitalWrite(XSHUT_LEFT, LOW);
+  digitalWrite(XSHUT_RIGHT, LOW);
+
   Serial.begin(9600);
   Wire.begin();
   Wire.setClock(400000); // use 400 kHz I2C
@@ -180,18 +190,34 @@ void setup() {
   radio.openReadingPipe(1, address);    // RX address (different pipe)
 
   radio.startListening();               // start in RX mode
-  Serial.println(F("Bidirectional node ready"));
 
-  mpu.begin(MPU6050_SCALE_2000DPS, MPU6050_RANGE_2G);
+  Serial.println(mpu.begin(MPU6050_SCALE_2000DPS, MPU6050_RANGE_2G));
   // Calibrate gyroscope. The calibration must be at rest.
   mpu.calibrateGyro();
   mpu.setThreshold(3);
 
-  sensor.init();
-  sensor.setTimeout(50);
-  sensor.setDistanceMode(VL53L1X::Long);
-  sensor.setMeasurementTimingBudget(33000);
-  sensor.startContinuous(50);
+  sensorFront.init();
+  sensorFront.setAddress(0x30);
+  sensorFront.setTimeout(50);
+  sensorFront.setDistanceMode(VL53L1X::Long);
+  sensorFront.setMeasurementTimingBudget(33000);
+  sensorFront.startContinuous(50);
+
+  digitalWrite(XSHUT_LEFT, HIGH);
+  
+  sensorLeft.init();
+  sensorLeft.setAddress(0x31);
+  sensorLeft.setTimeout(50);
+  sensorLeft.setMeasurementTimingBudget(33000);
+  sensorLeft.startContinuous(50);
+
+  digitalWrite(XSHUT_RIGHT, HIGH);
+  
+  sensorRight.init();
+  sensorLeft.setAddress(0x32);
+  sensorRight.setTimeout(50);
+  sensorRight.setMeasurementTimingBudget(33000);
+  sensorRight.startContinuous(50);
 
   SoftPWMSet(0, 0);
   SoftPWMSet(4, 0);
@@ -205,7 +231,7 @@ void setup() {
   masterCallInt(2, B(0, 1, 3), 3); // set INPUT US
   masterCallInt(2, B(1, 0, 2), 3); // set OUTPUT US
   masterCallInt(2, B(1, 4, 8, 7), 4); // set OUTPUT 7seg
-  masterCallInt(1, 1, 1); // Init 7seg
+  masterCallInt(10, 1, 1); // Init 7seg
 
   masterCallInt(8, B(5, 6), 2);
 }
@@ -218,7 +244,7 @@ void loop() {
     updateDisplay(); 
   }
 
-  const uint16_t sensors[3] = {sensor.read(), masterCallInt(7, B(0,1), 2), masterCallInt(7, B(2,3), 2)};
+  const uint16_t sensors[3] = {sensorFront.read(), sensorLeft.readRangeContinuousMillimeters(), sensorRight.readRangeContinuousMillimeters()};
   uint8_t values[8];
   masterCallIntArray(5, B(10, 11, 12, 13, 14, 15, 16, 17), 8, values, sizeof(values));
 
