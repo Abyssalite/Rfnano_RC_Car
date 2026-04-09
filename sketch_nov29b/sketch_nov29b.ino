@@ -1,4 +1,4 @@
-#include <SPI.h>
+#include <Wire.h>
 #include <RF24.h>
 #include <U8g2lib.h>
 
@@ -6,11 +6,11 @@ U8G2_SSD1309_128X64_NONAME0_1_HW_I2C u8g2(U8G2_R0, /* reset=*/ U8X8_PIN_NONE);
 
 #define CE_PIN  10
 #define CSN_PIN  9
+#define RF_PERIOD 30 // 30ms
 
 RF24 radio(CE_PIN, CSN_PIN);
 
 const byte address[6] = "1Node";
-const uint8_t RF_PERIOD = 30; 
 unsigned long rfTimer = 0;
 
 struct SendPayload {
@@ -18,13 +18,14 @@ struct SendPayload {
     int8_t joystick2[2];
     uint8_t digitalButton[6];
     uint8_t analogButton;
+    //uint8_t batt;
 };
 SendPayload sendPayload;
 
 struct ReceivePayload {
     uint8_t digitalIR[4];
     uint8_t analogIR[4];
-    uint16_t distanceSensor[3];
+    uint16_t distanceSensor[5];
     int16_t gyro[3];
     uint8_t batt;
 };
@@ -81,8 +82,6 @@ void updateDisplay() {
 }
 
 void setup() {
-  Serial.begin(9600);
-
   // Button pins
   pinMode(0, INPUT_PULLUP);
   pinMode(2, INPUT_PULLUP);
@@ -90,6 +89,20 @@ void setup() {
   pinMode(4, INPUT_PULLUP);
   pinMode(7, INPUT_PULLUP);
   pinMode(8, INPUT_PULLUP);
+
+  Wire.begin();
+  Wire.setClock(200000); // use 200 kHz I2C
+  Wire.setWireTimeout(30000, false);
+  radio.begin();
+
+  radio.setAutoAck(false);
+  radio.setDataRate(RF24_250KBPS);
+  radio.setPALevel(RF24_PA_MAX);
+  radio.setChannel(115);
+
+  radio.openWritingPipe(address);
+  radio.openReadingPipe(1, address);
+  radio.startListening();
 
   // Initialize OLED - Page mode
   u8g2.begin();
@@ -100,17 +113,7 @@ void setup() {
   u8g2.sendF("c", 0xD9, 0x22); 
   u8g2.sendF("c", 0xDB, 0x00);
 
-  radio.begin();
-  radio.setAutoAck(false);
-  radio.setDataRate(RF24_250KBPS);
-  radio.setPALevel(RF24_PA_MAX);
-  radio.setChannel(115);
-
-  radio.openWritingPipe(address);
-  radio.openReadingPipe(1, address);
-  radio.startListening();
-
-    u8g2.firstPage();                    // Start page mode
+  u8g2.firstPage();                    // Start page mode
   do {
     u8g2.setCursor(0, 36);
     u8g2.print("Batt: ");
@@ -145,6 +148,7 @@ void loop() {
     sendPayload.digitalButton[5] = digitalRead(8);
 
     sendPayload.analogButton = map(analogRead(A6), 0, 680, 0, 130);
+    //sendPayload.batt = map(analogRead(A7), 0, 1023, 0, 255);
 
     radio.write(&sendPayload, sizeof(sendPayload));
     radio.startListening();

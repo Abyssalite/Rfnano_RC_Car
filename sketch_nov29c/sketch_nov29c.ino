@@ -1,23 +1,102 @@
 #include <Wire.h>
-#include <Servo.h>
+#include <avr/interrupt.h>
+#include <Arduino.h>
+
 #define SLAVE_ADDR 8
-
-Servo servo1;
-Servo servo2;
-Servo led;
-
 #define DIN 7
 #define CLK 4
 #define CS 8
 
 // Store received data temporarily
-uint8_t args[8] = { 0 };  // max arguments
-uint8_t argCount = 0;
+volatile uint8_t args[8] = { 0 };  // max arguments
+volatile uint8_t argCount = 0;
 union {
-  uint16_t singleInt;
-  uint8_t intArray[8];
+  volatile uint16_t singleInt;
+  volatile uint8_t intArray[8];
 } result;
-bool returnSingleInt = true;
+volatile bool returnSingleInt = true;
+
+volatile uint8_t *tonePort;
+uint8_t toneMask;
+volatile uint16_t toneFreq = 0;
+volatile unsigned long toneEnd = 0;
+volatile bool toneActive = false;
+
+volatile uint8_t ledPin = 0;
+volatile uint8_t ledValue = 0;
+volatile unsigned long ledEnd = 0;
+volatile bool ledActive = false;
+
+void timer2Init() {
+  // CTC mode for tone generation
+  TCCR2A = 0;
+  TCCR2B = 0;
+  TIMSK2 = (1 << OCIE2A);
+}
+
+void initServoPWM() {
+  DDRB |= (1 << PB1) | (1 << PB2); // pins 9,10
+
+  TCCR1A = (1 << COM1A1) | (1 << COM1B1) | (1 << WGM11);
+  TCCR1B = (1 << WGM13) | (1 << WGM12) | (1 << CS11);  // prescaler 8
+
+  ICR1 = 19999; // 20ms (50Hz at 8MHz)
+}
+
+void playTone(uint8_t pin, uint16_t freq, uint16_t duration_ms) {
+  tonePort = portOutputRegister(digitalPinToPort(pin));
+  toneMask = digitalPinToBitMask(pin);
+  toneFreq = freq;
+  toneActive = true;
+
+  toneEnd = (duration_ms > 0)? millis() + duration_ms  : 0;
+
+  // Calculate OCR2A for toggle
+  // f_out = F_CPU / (2*N*(OCR2A+1))
+  // Prescaler N=8
+  uint32_t ocr = (F_CPU / (2UL * 8UL * toneFreq)) - 1;
+  if (ocr > 255) ocr = 255;
+
+  OCR2A = ocr;
+  TCCR2A = (1 << WGM21);
+  TCCR2B = (1 << CS21);                   // Prescaler 8
+}
+
+void stopTone() {
+  toneActive = false;
+  *tonePort &= !toneMask;
+  TCCR2A = 0;
+  TCCR2B = 0;
+}
+
+void startLedPWM(uint8_t pin, uint8_t value, uint16_t duration_ms) {
+  ledPin = pin;
+  ledValue = value;
+  ledActive = true;
+
+  ledEnd = (duration_ms > 0)? millis() + duration_ms  : 0;
+
+  analogWrite(ledPin, ledValue);
+}
+
+void stopLedPWM() {
+  ledActive = false;
+  analogWrite(ledPin, 0);
+}
+
+void setServo(uint8_t ch, uint8_t angle) {
+  uint16_t us = map(constrain(angle, 0, 180), 0, 180, 500, 2500);
+
+  if (ch == 9) OCR1A = us;
+  else OCR1B = us;
+}
+
+void checkTimers() {
+  unsigned long now = millis();
+
+  if (toneActive && toneEnd && now >= toneEnd) stopTone();
+  if (ledActive && ledEnd && now >= ledEnd) stopLedPWM();
+}
 
 void read8Pin() {
   returnSingleInt = false;
@@ -64,7 +143,7 @@ void maxWrite(uint8_t reg, uint8_t val) {
   digitalWrite(CS, HIGH);
 }
 
-void maxInit() {
+void initDisp() {
   digitalWrite(CS, HIGH);
 
   maxWrite(0x0C, 1);   // normal operation
@@ -88,16 +167,6 @@ void getUltrasonicDistance() {
 void switchFunction(uint8_t* functionId) {
 
   switch (*functionId) {
-    case 10:
-      {
-        if (argCount == 1)
-          maxInit();
-        if (argCount == 2)
-          maxWrite(args[0],args[1]);
-
-        break;
-      }
-
     case 2:
       {  // set pinmode
         if (argCount > 1)
@@ -139,23 +208,38 @@ void switchFunction(uint8_t* functionId) {
       }
 
     case 8:
-      {  // attach servo
-          if (argCount == 3) {
-            servo1.attach(args[0]);
-            servo2.attach(args[1]);
-            led.attach(args[2]);
-          }
+      {  // control Servo
+        if (argCount == 1)
+          initServoPWM();
+        if (argCount == 2)
+          setServo(args[0], args[1]); 
 
         break;
       }
 
     case 9:
-      {  // control servo
-        if (argCount == 3) {
-          servo1.write(args[0]);
-          servo2.write(args[1]);
-          led.attach(args[2]);
-        }
+      {
+        // control Display
+        if (argCount == 1)
+          initDisp();
+        if (argCount == 2)
+          maxWrite(args[0], args[1]);
+
+        break;
+      }
+
+    case 10:
+      {  // control LED
+        if (argCount == 3)
+          startLedPWM(args[0], args[1], args[2]);
+
+        break;
+      }
+
+    case 11:
+      {  // control Tone
+        if (argCount == 3)
+          playTone(args[0], args[1], args[2]);
 
         break;
       }
@@ -189,11 +273,19 @@ void requestEvent() {
   }
 }
 
+ISR(TIMER2_COMPA_vect) {
+  if (toneActive) {
+    *tonePort ^= toneMask;
+  }
+}
+
 void setup() {
   Wire.begin(SLAVE_ADDR);
+  timer2Init();
   Wire.onReceive(receiveEvent);  // When master sends data
   Wire.onRequest(requestEvent);  // When master requests data
 }
 
 void loop() {
+  checkTimers();
 }
