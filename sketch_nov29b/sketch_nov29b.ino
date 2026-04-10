@@ -6,7 +6,7 @@ U8G2_SSD1309_128X64_NONAME0_1_HW_I2C u8g2(U8G2_R0, /* reset=*/ U8X8_PIN_NONE);
 
 #define CE_PIN  10
 #define CSN_PIN  9
-#define RF_PERIOD 30 // 30ms
+#define RF_PERIOD 50 // 30ms
 
 RF24 radio(CE_PIN, CSN_PIN);
 
@@ -92,7 +92,7 @@ void setup() {
 
   Wire.begin();
   Wire.setClock(200000); // use 200 kHz I2C
-  Wire.setWireTimeout(30000, false);
+  Wire.setWireTimeout(40000, true);
   radio.begin();
 
   radio.setAutoAck(false);
@@ -135,10 +135,10 @@ void loop() {
     rfTimer = now;
     radio.stopListening();
 
-    sendPayload.joystick1[0] = map(analogRead(A0), 0, 884, -127, 127);
-    sendPayload.joystick1[1] = map(analogRead(A1), 0, 884, -127, 127);
-    sendPayload.joystick2[0] = map(analogRead(A2), 0, 884, -127, 127);
-    sendPayload.joystick2[1] = map(analogRead(A3), 0, 884, -127, 127);
+    sendPayload.joystick1[0] = constrain((map(analogRead(A0), 0, 884, -127, 127)), -127, 127);
+    sendPayload.joystick1[1] = constrain((map(analogRead(A1), 0, 884, -127, 127)), -127, 127);
+    sendPayload.joystick2[0] = constrain((map(analogRead(A2), 0, 884, -127, 127)), -127, 127);
+    sendPayload.joystick2[1] = constrain((map(analogRead(A3), 0, 884, -127, 127)), -127, 127);
 
     sendPayload.digitalButton[0] = digitalRead(0);
     sendPayload.digitalButton[1] = digitalRead(2);
@@ -147,7 +147,7 @@ void loop() {
     sendPayload.digitalButton[4] = digitalRead(7);
     sendPayload.digitalButton[5] = digitalRead(8);
 
-    sendPayload.analogButton = map(analogRead(A6), 0, 680, 0, 130);
+    sendPayload.analogButton = constrain((map(analogRead(A6), 0, 680, 0, 130)), 0, 130);
     //sendPayload.batt = map(analogRead(A7), 0, 1023, 0, 255);
 
     radio.write(&sendPayload, sizeof(sendPayload));

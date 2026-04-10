@@ -12,14 +12,16 @@
 #define SLAVE_ADDR 8
 #define CE_PIN 10
 #define CSN_PIN 9
-#define XSHUT_LEFT 5
-#define XSHUT_RIGHT 6
+#define XSHUT_LEFT 1
+#define XSHUT_MIDDLE 6
+#define XSHUT_RIGHT 0
+
 #define THRESHOLD 18000
 #define DT 0.01f
-#define GYRO_PERIOD 20  // 20ms
-#define RF_PERIOD 300   // 300ms
-#define DISP_PERIOD 20  // 20ms
-#define TOF_PERIOD 100  // 20ms
+#define GYRO_PERIOD 10// 10ms
+#define RF_PERIOD 500   // 500ms
+#define DISP_PERIOD 1000  // 1s
+#define TOF_PERIOD 100  // 1080ms
 
 const byte address[6] = "1Node";  // Same address on BOTH boards
 unsigned long rfTimer = 0;
@@ -108,7 +110,7 @@ uint8_t masterCallIntArray(uint8_t func, const uint8_t* args, uint8_t* results) 
 }
 
 void setMotor(uint8_t pins[2], int8_t speed) {
-  speed = map(speed, -126, 126, -100, 100);
+  speed = map(speed, -127, 127, -100, 100);
   speed = constrain(speed, -100, 100);
 
   if (speed > 10) {
@@ -130,10 +132,10 @@ void setServo(int8_t position, uint8_t* servoValue, uint8_t servo) {
   if (abs(position) < 10) return;
   uint8_t buf[2];
 
-  position = map(position, -126, 126, -3, 3);
-  position = constrain(position, -3, 3);
+  position = map(position, -127, 127, -4, 4);
+  position = constrain(position, -4, 4);
 
-  *servoValue = constrain(*servoValue += position, 5, 175);
+  *servoValue = constrain((*servoValue += position), 5, 175);
 
   buf[0] = servo;
   buf[1] = *servoValue;
@@ -167,7 +169,8 @@ void updateDisplay() {
 
   for (uint8_t i = 0; i < 5; i++) {
     // Scale to 0-7 (height of bar)
-    uint8_t level = map(constrain(gauges[i], 0, 130), 0, 130, 0, 6);
+    uint8_t level = map(gauges[i], 0, 130, 0, 6);
+    level = constrain(level, 0, 6);
 
     uint8_t pattern = 0;
 
@@ -193,9 +196,9 @@ void updateDisplay() {
   for (uint8_t i = 0; i < 3; i++) {
     uint8_t pattern = 0x00;
 
-    if (btns[i] == 0)
+    if (!btns[i])
       pattern |= 0b0110000;
-    if (btns[i + 3] == 0)
+    if (!btns[i + 3])
       pattern |= 0b0000110;
 
     buf[0] = i + 6;  // digits 5,6,7
@@ -204,16 +207,68 @@ void updateDisplay() {
   }
 }
 
+void deviceInit() {
+  digitalWrite(XSHUT_LEFT, LOW);
+  digitalWrite(XSHUT_RIGHT, LOW);
+  digitalWrite(XSHUT_MIDDLE, LOW);
+
+  delay(10);
+
+  mpu.begin(MPU6050_SCALE_2000DPS, MPU6050_RANGE_2G);
+  // Calibrate gyroscope. The calibration must be at rest.
+  mpu.calibrateGyro();
+  mpu.setThreshold(3);
+
+  digitalWrite(XSHUT_LEFT, HIGH);
+  delay(50);
+
+  sensorLeft.init();
+  sensorLeft.setAddress(0x31);
+  sensorLeft.setTimeout(80);
+  sensorLeft.setMeasurementTimingBudget(33000);
+  sensorLeft.startContinuous(100);
+
+  digitalWrite(XSHUT_RIGHT, HIGH);
+  delay(50);
+
+  sensorRight.init();
+  sensorRight.setAddress(0x32);
+  sensorRight.setTimeout(80);
+  sensorRight.setMeasurementTimingBudget(33000);
+  sensorRight.startContinuous(100);
+
+  digitalWrite(XSHUT_MIDDLE, HIGH);
+  delay(50);
+
+  sensorFront.init();
+  sensorFront.setAddress(0x30);
+  sensorFront.setTimeout(80);
+  sensorFront.setDistanceMode(VL53L1X::Long);
+  sensorFront.setMeasurementTimingBudget(33000);
+  sensorFront.startContinuous(100);
+
+  delay(50);
+
+  masterCallInt(2, B(INPUT, 14, 15, 16, 17), 5);  // set INPUT IR
+  masterCallInt(2, B(INPUT, 7, 8, 12, 13), 5);    // set INPUT IR
+  masterCallInt(2, B(INPUT, 1, 3), 3);            // set INPUT US
+  masterCallInt(2, B(OUTPUT, 0, 2), 3);            // set OUTPUT US
+  masterCallInt(2, B(OUTPUT, 4, 20, 21), 4);       // set OUTPUT 7seg
+  masterCallInt(2, B(OUTPUT, 6, 5), 3);            // set OUTPUT PWM
+
+  masterCallInt(9, 1, 1);     // Init 7seg
+  masterCallInt(8, B(0), 1);  // Init Servo
+  masterCallInt(11, B(0), 1);  // Init Tone
+}
+
 void setup() {
   pinMode(XSHUT_LEFT, OUTPUT);
   pinMode(XSHUT_RIGHT, OUTPUT);
-  digitalWrite(XSHUT_LEFT, LOW);
-  digitalWrite(XSHUT_RIGHT, LOW);
+  pinMode(XSHUT_MIDDLE, OUTPUT);
 
   Wire.begin();
   Wire.setClock(200000);  // use 200 kHz I2C
-  Wire.setWireTimeout(30000, false);
-  SoftPWMBegin();
+  Wire.setWireTimeout(40000, true);
   radio.begin();
 
   radio.setAutoAck(false);
@@ -225,28 +280,7 @@ void setup() {
   radio.openReadingPipe(1, address);  // RX address (different pipe)
   radio.startListening();             // start in RX mode
 
-  sensorFront.init();
-  sensorFront.setAddress(0x30);
-  sensorFront.setTimeout(100);
-  sensorFront.setDistanceMode(VL53L1X::Long);
-  sensorFront.setMeasurementTimingBudget(33000);
-  sensorFront.startContinuous(100);
-
-  digitalWrite(XSHUT_LEFT, HIGH);
-
-  sensorLeft.init();
-  sensorLeft.setAddress(0x31);
-  sensorLeft.setTimeout(100);
-  sensorLeft.setMeasurementTimingBudget(33000);
-  sensorLeft.startContinuous(100);
-
-  digitalWrite(XSHUT_RIGHT, HIGH);
-
-  sensorRight.init();
-  sensorRight.setAddress(0x32);
-  sensorRight.setTimeout(100);
-  sensorRight.setMeasurementTimingBudget(33000);
-  sensorRight.startContinuous(100);
+  SoftPWMBegin();
 
   SoftPWMSet(2, 0);
   SoftPWMSet(4, 0);
@@ -257,20 +291,8 @@ void setup() {
   SoftPWMSet(A2, 0);
   SoftPWMSet(A3, 0);
 
-  masterCallInt(2, B(0, 1, 3), 3);            // set INPUT US
-  masterCallInt(2, B(1, 0, 2), 3);            // set OUTPUT US
-  masterCallInt(2, B(1, 4, 21, 20), 4);       // set OUTPUT 7seg
-  masterCallInt(2, B(1, 10, 9), 3);           // set OUTPUT Servo
-  masterCallInt(2, B(0, 14, 15, 16, 17), 4);  // set INPUT IR
-  masterCallInt(2, B(0, 7, 8, 12, 13), 4);    // set INPUT IR
+  deviceInit();
 
-  masterCallInt(9, 1, 1);     // Init 7seg
-  masterCallInt(8, B(0), 1);  // Init Servo
-
-  mpu.begin(MPU6050_SCALE_2000DPS, MPU6050_RANGE_2G);
-  // Calibrate gyroscope. The calibration must be at rest.
-  mpu.calibrateGyro();
-  mpu.setThreshold(3);
 }
 
 void loop() {
@@ -280,7 +302,8 @@ void loop() {
 
     moveFordward();
     moveHead();
-  }
+  }  
+
 
   unsigned long now = millis();
   if (now - dispTimer >= DISP_PERIOD) {
@@ -290,7 +313,7 @@ void loop() {
   if (analogRead(A7) > 750) {
 
     if (now - tofTimer >= TOF_PERIOD) {
-      sensors[0] = sensorFront.read(false);
+      sensors[0] = sensorFront.readRangeContinuousMillimeters(false);
       sensors[1] = sensorLeft.readRangeContinuousMillimeters();
       sensors[2] = sensorRight.readRangeContinuousMillimeters();
       sensors[3] = masterCallInt(7, B(0, 1), 2);

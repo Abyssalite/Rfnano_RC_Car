@@ -2,10 +2,11 @@
 #include <avr/interrupt.h>
 #include <Arduino.h>
 
+#define F_CPU 8000000L
 #define SLAVE_ADDR 8
-#define DIN 7
+#define DIN 21
+#define CS 20
 #define CLK 4
-#define CS 8
 
 // Store received data temporarily
 volatile uint8_t args[8] = { 0 };  // max arguments
@@ -16,86 +17,53 @@ union {
 } result;
 volatile bool returnSingleInt = true;
 
-volatile uint8_t *tonePort;
-uint8_t toneMask;
-volatile uint16_t toneFreq = 0;
-volatile unsigned long toneEnd = 0;
-volatile bool toneActive = false;
-
-volatile uint8_t ledPin = 0;
-volatile uint8_t ledValue = 0;
-volatile unsigned long ledEnd = 0;
-volatile bool ledActive = false;
-
-void timer2Init() {
-  // CTC mode for tone generation
-  TCCR2A = 0;
-  TCCR2B = 0;
-  TIMSK2 = (1 << OCIE2A);
-}
-
 void initServoPWM() {
   DDRB |= (1 << PB1) | (1 << PB2); // pins 9,10
 
+  // Fast PWM, non-inverting
   TCCR1A = (1 << COM1A1) | (1 << COM1B1) | (1 << WGM11);
   TCCR1B = (1 << WGM13) | (1 << WGM12) | (1 << CS11);  // prescaler 8
 
   ICR1 = 19999; // 20ms (50Hz at 8MHz)
 }
 
-void playTone(uint8_t pin, uint16_t freq, uint16_t duration_ms) {
-  tonePort = portOutputRegister(digitalPinToPort(pin));
-  toneMask = digitalPinToBitMask(pin);
-  toneFreq = freq;
-  toneActive = true;
+void initTimer2() {
+  DDRB |= (1 << PB3); // pins 11
 
-  toneEnd = (duration_ms > 0)? millis() + duration_ms  : 0;
-
-  // Calculate OCR2A for toggle
-  // f_out = F_CPU / (2*N*(OCR2A+1))
-  // Prescaler N=8
-  uint32_t ocr = (F_CPU / (2UL * 8UL * toneFreq)) - 1;
-  if (ocr > 255) ocr = 255;
-
-  OCR2A = ocr;
-  TCCR2A = (1 << WGM21);
-  TCCR2B = (1 << CS21);                   // Prescaler 8
-}
-
-void stopTone() {
-  toneActive = false;
-  *tonePort &= !toneMask;
+  // CTC mode for tone generation
   TCCR2A = 0;
   TCCR2B = 0;
-}
-
-void startLedPWM(uint8_t pin, uint8_t value, uint16_t duration_ms) {
-  ledPin = pin;
-  ledValue = value;
-  ledActive = true;
-
-  ledEnd = (duration_ms > 0)? millis() + duration_ms  : 0;
-
-  analogWrite(ledPin, ledValue);
-}
-
-void stopLedPWM() {
-  ledActive = false;
-  analogWrite(ledPin, 0);
 }
 
 void setServo(uint8_t ch, uint8_t angle) {
   uint16_t us = map(constrain(angle, 0, 180), 0, 180, 500, 2500);
 
   if (ch == 9) OCR1A = us;
-  else OCR1B = us;
+  else if (ch == 10) OCR1B = us;
 }
 
-void checkTimers() {
-  unsigned long now = millis();
+void playTone(uint8_t pin, uint8_t value, uint8_t mul) {
+  if (pin != 11) return;
 
-  if (toneActive && toneEnd && now >= toneEnd) stopTone();
-  if (ledActive && ledEnd && now >= ledEnd) stopLedPWM();
+  if (value <= 0 || mul <= 0) {
+    stopTone();
+    return;
+  }
+  uint16_t freq = constrain((value * mul), 0, 16000);
+  uint16_t ocr = (F_CPU / (2UL * 256UL * freq)) - 1;
+
+  if (ocr > 255) ocr = 255;
+
+  OCR2A = (uint8_t)ocr;
+
+  TCCR2A = (1 << COM2A0) | (1 << WGM21); // toggle CTC
+  TCCR2B = (1 << CS22);                  // prescaler 256
+}
+
+void stopTone() {
+  OCR2A = 0;
+  TCCR2A = 0;
+  TCCR2B = 0;
 }
 
 void read8Pin() {
@@ -118,22 +86,18 @@ void read1Pin() {
 
 void writePin() {
   bool value = args[0];
-  for (uint8_t i = 1; i <= argCount - 1; i++) {
-    if (args[i] < 18)
-      digitalWrite(args[i], value);
-  }
+  for (uint8_t i = 1; i <= argCount - 1; i++)
+    digitalWrite(args[i], value);
 
-  result.singleInt = 32003;
+  result.singleInt = value;
 }
 
 void setPin() {
   bool value = args[0];
   for (uint8_t i = 1; i <= argCount - 1; i++)
-    if (args[i] < 18) {
-      pinMode(args[i], value);
-    }
+    pinMode(args[i], value);
 
-  result.singleInt = 32002;
+  result.singleInt = value;
 }
 
 void maxWrite(uint8_t reg, uint8_t val) {
@@ -229,15 +193,17 @@ void switchFunction(uint8_t* functionId) {
       }
 
     case 10:
-      {  // control LED
-        if (argCount == 3)
-          startLedPWM(args[0], args[1], args[2]);
+      {  // control PWM0
+        if (argCount == 2)
+          analogWrite(args[0], constrain(args[1], 0, 255));
 
         break;
       }
 
     case 11:
       {  // control Tone
+        if (argCount == 1)
+          initTimer2();
         if (argCount == 3)
           playTone(args[0], args[1], args[2]);
 
@@ -273,19 +239,11 @@ void requestEvent() {
   }
 }
 
-ISR(TIMER2_COMPA_vect) {
-  if (toneActive) {
-    *tonePort ^= toneMask;
-  }
-}
-
 void setup() {
   Wire.begin(SLAVE_ADDR);
-  timer2Init();
   Wire.onReceive(receiveEvent);  // When master sends data
   Wire.onRequest(requestEvent);  // When master requests data
 }
 
 void loop() {
-  checkTimers();
 }
