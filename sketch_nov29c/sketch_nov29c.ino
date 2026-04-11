@@ -49,7 +49,8 @@ void playTone(uint8_t pin, uint8_t value, uint8_t mul) {
     stopTone();
     return;
   }
-  uint16_t freq = constrain((value * mul), 0, 16000);
+  uint16_t freq = value * mul;
+  freq = constrain(freq, 0, 16000);
   uint16_t ocr = (F_CPU / (2UL * 256UL * freq)) - 1;
 
   if (ocr > 255) ocr = 255;

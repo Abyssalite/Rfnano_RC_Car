@@ -6,7 +6,7 @@ U8G2_SSD1309_128X64_NONAME0_1_HW_I2C u8g2(U8G2_R0, /* reset=*/ U8X8_PIN_NONE);
 
 #define CE_PIN  10
 #define CSN_PIN  9
-#define RF_PERIOD 50 // 30ms
+#define RF_PERIOD 30 // 30ms
 
 RF24 radio(CE_PIN, CSN_PIN);
 
