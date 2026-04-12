@@ -23,7 +23,8 @@
 #define RF_PERIOD 300   // 300ms
 #define DISP_PERIOD 20  // 10ms
 #define TOF_PERIOD 100  // 100ms
-#define CONNECTION_TIMEOUT 50
+#define US_PERIOD 120   // 120ms
+#define CONNECTION_TIMEOUT 100
 
 const byte address[6] = "1Node";  // Same address on BOTH boards
 
@@ -35,9 +36,7 @@ unsigned long rfTimer = 0;
 unsigned long gyroTimer = 0;
 unsigned long dispTimer = 0;
 unsigned long tofTimer = 0;
-int16_t roll = 0;
-int16_t pitch = 0;
-int16_t yaw = 0;
+unsigned long usTimer = 0;
 
 const uint8_t MOTOR[4][2] = {
   { A0, A1 },  // FRONT_RIGHT
@@ -54,7 +53,8 @@ const uint8_t segMap[6] = {
 struct SendPayload {
   uint8_t digitalIR[4];
   uint8_t analogIR[4];
-  uint16_t distanceSensor[5];
+  uint16_t tofSensors[3];
+  uint16_t usSensors[2];
   int16_t gyro[3];
   uint8_t batt;
 };
@@ -74,10 +74,11 @@ VL53L0X sensorRight;
 VL53L0X sensorLeft;
 MPU6050 mpu;
 
-uint8_t servo1Value = 90;
-uint8_t servo2Value = 90;
+int16_t gyro[3] = {0};
+uint8_t servoValue[2] = {90};
 uint8_t irValues[8];
-uint16_t sensors[5];
+uint16_t tofSensors[3];
+uint16_t usSensors[2];
 bool isStopped = false;
 
 // int return
@@ -135,7 +136,7 @@ void setMotor(uint8_t pins[2], int8_t speed, uint8_t i) {
 
 void setServo(int8_t position, uint8_t* servoValue, uint8_t servo) {
   if (abs(position) < 10) return;
-  uint8_t buf[2];
+  uint8_t tempBuffer[2];
 
   position = map(position, -127, 127, -4, 4);
   position = constrain(position, -4, 4);
@@ -143,36 +144,39 @@ void setServo(int8_t position, uint8_t* servoValue, uint8_t servo) {
   int16_t temp = *servoValue + position;
   *servoValue = (uint8_t)constrain(temp, 5, 175);
 
-  buf[0] = servo;
-  buf[1] = *servoValue;
-  masterCallInt(8, buf, 2);
+  tempBuffer[0] = servo;
+  tempBuffer[1] = *servoValue;
+  masterCallInt(8, tempBuffer, 2);
 }
 
-void moveRobot() {
-  int8_t x = receivePayload.joystick2[0];  // left/right
-  int8_t y = receivePayload.joystick2[1];  // forward/back
-  int8_t rot = 0;
+void moveRobot(bool canMove = true) {
   int16_t raw[4]{ 0 };
 
-  if (receivePayload.analogButton > 110)
-    rot = -50;
-  else if (receivePayload.analogButton > 80)
-    rot = 50;
+  if (canMove) {
+    int8_t x = receivePayload.joystick2[0];  // left/right
+    int8_t y = receivePayload.joystick2[1];  // forward/back
+    int8_t rot = 0;
 
-  raw[0] = y - x + rot;  // FRONT_RIGHT
-  raw[1] = y - x - rot;  // FRONT_LEFT
-  raw[2] = y + x + rot;  // REAR_RIGHT
-  raw[3] = y + x - rot;  // REAR_LEFT
+    if (receivePayload.analogButton > 110)
+      rot = -50;
+    else if (receivePayload.analogButton > 80)
+      rot = 50;
 
-  // Normalize to avoid overflow
-  int16_t maxVal = 0;
-  for (uint8_t i = 0; i < 4; i++) {
-    if (abs(raw[i]) > maxVal) maxVal = abs(raw[i]);
-  }
+    raw[0] = y - x + rot;  // FRONT_RIGHT
+    raw[1] = y - x - rot;  // FRONT_LEFT
+    raw[2] = y + x + rot;  // REAR_RIGHT
+    raw[3] = y + x - rot;  // REAR_LEFT
 
-  if (maxVal > 127) {
+    // Normalize to avoid overflow
+    int16_t maxVal = 0;
     for (uint8_t i = 0; i < 4; i++) {
-      raw[i] = raw[i] * 127 / maxVal;
+      if (abs(raw[i]) > maxVal) maxVal = abs(raw[i]);
+    }
+
+    if (maxVal > 127) {
+      for (uint8_t i = 0; i < 4; i++) {
+        raw[i] = raw[i] * 127 / maxVal;
+      }
     }
   }
 
@@ -182,8 +186,8 @@ void moveRobot() {
 }
 
 void moveHead() {
-  setServo(-receivePayload.joystick1[1], &servo1Value, 10);  // x-axis
-  setServo(receivePayload.joystick1[0], &servo2Value, 9);    // y-axis
+  setServo(-receivePayload.joystick1[1], &servoValue[0], 10);  // x-axis
+  setServo(receivePayload.joystick1[0], &servoValue[1], 9);    // y-axis
 }
 
 void updateBuffer() {
@@ -275,12 +279,11 @@ void deviceInit() {
 
   delay(50);
 
-  masterCallInt(2, B(INPUT, 14, 15, 16, 17), 5);  // set INPUT IR
-  masterCallInt(2, B(INPUT, 7, 8, 12, 13), 5);    // set INPUT IR
-  masterCallInt(2, B(INPUT, 1, 3), 3);            // set INPUT US
-  masterCallInt(2, B(OUTPUT, 0, 2), 3);           // set OUTPUT US
-  masterCallInt(2, B(OUTPUT, 4, 20, 21), 4);      // set OUTPUT 7seg
-  masterCallInt(2, B(OUTPUT, 6, 5), 3);           // set OUTPUT PWM
+  masterCallInt(2, B(INPUT, 14, 15, 16, 17, 1), 6);  // set INPUT IR, US
+  masterCallInt(2, B(INPUT, 7, 8, 12, 13, 3), 6);    // set INPUT IR, US
+
+  masterCallInt(2, B(OUTPUT, 0, 2, 5, 6), 5);        // set OUTPUT US, PWM
+  masterCallInt(2, B(OUTPUT, 4, 20, 21), 4);         // set OUTPUT 7seg
 
   masterCallInt(9, 1, 1);      // Init 7seg
   masterCallInt(8, B(0), 1);   // Init Servo
@@ -335,57 +338,51 @@ void loop() {
   }
 
 
-  if (now - lastReceiveTime >= CONNECTION_TIMEOUT) {
-    receivePayload.joystick1[0] = 0;
-    receivePayload.joystick1[1] = 0;
-    receivePayload.joystick2[0] = 0;
-    receivePayload.joystick2[1] = 0;
-    receivePayload.analogButton = 0;
+  if ((analogRead(A7) < 600) || (now - lastReceiveTime >= CONNECTION_TIMEOUT)) {
+    memset(&sendPayload, 0, sizeof(sendPayload));
+    moveRobot(false);
   }
 
   if (now - dispTimer >= DISP_PERIOD) {
     dispTimer = now;
-    uint8_t buf[2] = { displayIndex + 1, displayBuffer[displayIndex] };
-    masterCallInt(9, buf, 2);
+    uint8_t tempBuffer[2] = { displayIndex + 1, displayBuffer[displayIndex] };
+    masterCallInt(9, tempBuffer, 2);
 
     displayIndex++;
     if (displayIndex > 7) displayIndex = 0;
   }
 
-  if (analogRead(A7) > 650) {
-
+  if (analogRead(A7) >= 600) {
     moveRobot();
     moveHead();
 
     if (now - tofTimer >= TOF_PERIOD) {
-      sensors[0] = sensorFront.readRangeContinuousMillimeters(false);
-      sensors[1] = sensorLeft.readRangeContinuousMillimeters();
-      sensors[2] = sensorRight.readRangeContinuousMillimeters();
-      sensors[3] = masterCallInt(7, B(0, 1), 2);
-      sensors[4] = masterCallInt(7, B(2, 3), 2);
+      tofSensors[0] = sensorFront.readRangeContinuousMillimeters(false);
+      tofSensors[1] = sensorLeft.readRangeContinuousMillimeters();
+      tofSensors[2] = sensorRight.readRangeContinuousMillimeters();
 
       masterCallIntArray(5, B(7, 8, 12, 13, 14, 15, 16, 17), irValues, 8);
+    }
+
+    if (now - usTimer >= US_PERIOD) {
+      usTimer = now;
+
+      usSensors[0] = masterCallInt(7, B(0, 1), 2);
+      usSensors[1] = masterCallInt(7, B(2, 3), 2);
     }
 
     if (now - gyroTimer >= GYRO_PERIOD) {
       gyroTimer = now;
       Vector norm = mpu.readNormalizeGyro();
 
-      roll += (int16_t)(norm.XAxis * GYRO_PERIOD);  // period(ms) / 1000 * 1000(scale)
-      pitch += (int16_t)(norm.YAxis * GYRO_PERIOD);
-      yaw += (int16_t)(norm.ZAxis * GYRO_PERIOD);
+      gyro[0] += (int16_t)(norm.XAxis * GYRO_PERIOD);  // period(ms) / 1000 * 1000(scale)
+      gyro[1] += (int16_t)(norm.YAxis * GYRO_PERIOD);
+      gyro[2] += (int16_t)(norm.ZAxis * GYRO_PERIOD);
 
-      roll = (abs(roll) > THRESHOLD) ? roll * -1 : roll;
-      pitch = (abs(pitch) > THRESHOLD) ? pitch * -1 : pitch;
-      yaw = (abs(yaw) > THRESHOLD) ? yaw * -1 : yaw;
-
-      roll = constrain(roll, -18000, 18000);
-      pitch = constrain(pitch, -18000, 18000);
-      yaw = constrain(yaw, -18000, 18000);
-
-      sendPayload.gyro[0] = roll;
-      sendPayload.gyro[1] = pitch;
-      sendPayload.gyro[2] = yaw;
+      for (uint8_t i = 0; i < 3; i++) {
+        int16_t temp = (abs(gyro[i]) > THRESHOLD) ? gyro[i] * -1 : gyro[i];
+        gyro[i] = constrain(temp, -THRESHOLD, THRESHOLD);        
+      }
     }
   }
 
@@ -393,6 +390,10 @@ void loop() {
   if (now - rfTimer >= RF_PERIOD) {
     rfTimer = now;
     radio.stopListening();
+
+    sendPayload.gyro[0] = gyro[0];
+    sendPayload.gyro[1] = gyro[1];
+    sendPayload.gyro[2] = gyro[2];
 
     sendPayload.digitalIR[0] = irValues[0];
     sendPayload.digitalIR[1] = irValues[1];
@@ -404,9 +405,9 @@ void loop() {
     sendPayload.analogIR[2] = irValues[6];
     sendPayload.analogIR[3] = irValues[7];
 
-    sendPayload.distanceSensor[0] = sensors[0];
-    sendPayload.distanceSensor[1] = sensors[1];
-    sendPayload.distanceSensor[2] = sensors[2];
+    sendPayload.tofSensors[0] = tofSensors[0];
+    sendPayload.tofSensors[1] = tofSensors[1];
+    sendPayload.tofSensors[2] = tofSensors[2];
 
     sendPayload.batt = map(analogRead(A7), 0, 1023, 0, 255);
 

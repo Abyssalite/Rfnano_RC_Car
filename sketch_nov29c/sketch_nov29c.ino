@@ -212,6 +212,7 @@ void switchFunction(uint8_t* functionId) {
       }
 
     default:
+      result.singleInt = 32001;
 
       break;
   }

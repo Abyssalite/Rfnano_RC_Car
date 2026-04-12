@@ -23,11 +23,12 @@ struct SendPayload {
 SendPayload sendPayload;
 
 struct ReceivePayload {
-    uint8_t digitalIR[4];
-    uint8_t analogIR[4];
-    uint16_t distanceSensor[5];
-    int16_t gyro[3];
-    uint8_t batt;
+  uint8_t digitalIR[4];
+  uint8_t analogIR[4];
+  uint16_t tofSensors[3];
+  uint16_t usSensors[2];
+  int16_t gyro[3];
+  uint8_t batt;
 };
 ReceivePayload receivePayload;
 
@@ -37,11 +38,11 @@ void updateDisplay() {
     // Line 1: Distance sensors
     u8g2.setCursor(0, 12);
     u8g2.print("Dist: ");
-    u8g2.print(receivePayload.distanceSensor[0]);
+    u8g2.print(receivePayload.tofSensors[0]);
     u8g2.print(" ");
-    u8g2.print(receivePayload.distanceSensor[1]);
+    u8g2.print(receivePayload.tofSensors[1]);
     u8g2.print(" ");
-    u8g2.print(receivePayload.distanceSensor[2]);
+    u8g2.print(receivePayload.tofSensors[2]);
 
     // Line 2: Gyro
     u8g2.setCursor(0, 24);
