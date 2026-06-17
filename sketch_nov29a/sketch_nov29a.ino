@@ -20,11 +20,11 @@
 #define THRESHOLD 18000
 #define DT 0.01f
 #define GYRO_PERIOD 10  // 10ms
-#define RF_PERIOD 300   // 300ms
-#define DISP_PERIOD 20  // 10ms
-#define TOF_PERIOD 100  // 100ms
-#define US_PERIOD 120   // 120ms
-#define CONNECTION_TIMEOUT 100
+#define RF_PERIOD 500   // 500ms
+#define DISP_PERIOD 51  // 50ms
+#define TOF_PERIOD 201  // 200ms
+#define US_PERIOD 199   // 200ms
+#define CONNECTION_TIMEOUT 500
 
 const byte address[6] = "1Node";  // Same address on BOTH boards
 
@@ -254,28 +254,28 @@ void deviceInit() {
 
   sensorLeft.init();
   sensorLeft.setAddress(0x31);
-  sensorLeft.setTimeout(80);
+  sensorLeft.setTimeout(60);
   sensorLeft.setMeasurementTimingBudget(33000);
-  sensorLeft.startContinuous(100);
+  sensorLeft.startContinuous(200);
 
   digitalWrite(XSHUT_RIGHT, HIGH);
   delay(50);
 
   sensorRight.init();
   sensorRight.setAddress(0x32);
-  sensorRight.setTimeout(80);
+  sensorRight.setTimeout(60);
   sensorRight.setMeasurementTimingBudget(33000);
-  sensorRight.startContinuous(100);
+  sensorRight.startContinuous(200);
 
   digitalWrite(XSHUT_MIDDLE, HIGH);
   delay(50);
 
   sensorFront.init();
   sensorFront.setAddress(0x30);
-  sensorFront.setTimeout(80);
+  sensorFront.setTimeout(60);
   sensorFront.setDistanceMode(VL53L1X::Long);
   sensorFront.setMeasurementTimingBudget(33000);
-  sensorFront.startContinuous(100);
+  sensorFront.startContinuous(200);
 
   delay(50);
 
@@ -299,7 +299,7 @@ void setup() {
 
   Wire.begin();
   Wire.setClock(200000);  // use 200 kHz I2C
-  Wire.setWireTimeout(40000, true);
+  Wire.setWireTimeout(40000, false);
   radio.begin();
 
   radio.setAutoAck(false);
@@ -338,7 +338,7 @@ void loop() {
   }
 
 
-  if ((analogRead(A7) < 600) || (now - lastReceiveTime >= CONNECTION_TIMEOUT)) {
+  if (now - lastReceiveTime >= CONNECTION_TIMEOUT) {
     memset(&sendPayload, 0, sizeof(sendPayload));
     moveRobot(false);
   }
@@ -352,12 +352,15 @@ void loop() {
     if (displayIndex > 7) displayIndex = 0;
   }
 
-  if (analogRead(A7) >= 600) {
+  if (analogRead(A7) > 700) {
     moveRobot();
+  }
+
+  if (analogRead(A7) >= 550) {
     moveHead();
 
     if (now - tofTimer >= TOF_PERIOD) {
-      tofSensors[0] = sensorFront.readRangeContinuousMillimeters(false);
+      tofSensors[0] = 0;//sensorFront.readRangeContinuousMillimeters(false);
       tofSensors[1] = sensorLeft.readRangeContinuousMillimeters();
       tofSensors[2] = sensorRight.readRangeContinuousMillimeters();
 
@@ -408,6 +411,9 @@ void loop() {
     sendPayload.tofSensors[0] = tofSensors[0];
     sendPayload.tofSensors[1] = tofSensors[1];
     sendPayload.tofSensors[2] = tofSensors[2];
+
+    sendPayload.usSensors[0] = usSensors[0];
+    sendPayload.usSensors[1] = usSensors[1];
 
     sendPayload.batt = map(analogRead(A7), 0, 1023, 0, 255);
 
