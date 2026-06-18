@@ -6,7 +6,7 @@ U8G2_SSD1309_128X64_NONAME0_1_HW_I2C u8g2(U8G2_R0, /* reset=*/ U8X8_PIN_NONE);
 
 #define CE_PIN  10
 #define CSN_PIN  9
-#define RF_PERIOD 50 // 50ms
+#define RF_PERIOD 30 // 30ms
 
 RF24 radio(CE_PIN, CSN_PIN);
 
@@ -18,7 +18,6 @@ struct SendPayload {
     int8_t joystick2[2];
     uint8_t digitalButton[6];
     uint8_t analogButton;
-    //uint8_t batt;
 };
 SendPayload sendPayload;
 
@@ -136,30 +135,40 @@ void loop() {
     updateDisplay();
   }
 
-  if ((analogRead(A7) >= 560) || (analogRead(A7) < 900)) {
-    // 2. TRANSMIT PART
-    unsigned long now = millis();
-    if (now - rfTimer >= RF_PERIOD) {
-      rfTimer = now;
-      radio.stopListening();
+  // 2. TRANSMIT PART
+  unsigned long now = millis();
+  if (now - rfTimer >= RF_PERIOD) {
+    rfTimer = now;
+    radio.stopListening();
 
-      sendPayload.joystick1[0] = constrain((map(analogRead(A0), 0, 884, -127, 127)), -127, 127);
-      sendPayload.joystick1[1] = constrain((map(analogRead(A1), 0, 884, -127, 127)), -127, 127);
-      sendPayload.joystick2[0] = constrain((map(analogRead(A2), 0, 884, -127, 127)), -127, 127);
-      sendPayload.joystick2[1] = constrain((map(analogRead(A3), 0, 884, -127, 127)), -127, 127);
+    int joy0 = 0;
+    int joy1 = 0;
+    int joy2 = 0;
+    int joy3 = 0;
 
-      sendPayload.digitalButton[0] = digitalRead(0);
-      sendPayload.digitalButton[1] = digitalRead(2);
-      sendPayload.digitalButton[2] = digitalRead(3);
-      sendPayload.digitalButton[3] = digitalRead(4);
-      sendPayload.digitalButton[4] = digitalRead(7);
-      sendPayload.digitalButton[5] = digitalRead(8);
+    if ((analogRead(A7) > 550) && (analogRead(A7) < 910)) {
+      joy0 = map(analogRead(A0), 0, 915, -127, 127);
+      joy1 = map(analogRead(A1), 0, 915, -127, 127);
+      joy2 = map(analogRead(A2), 0, 915, -127, 127);
+      joy3 = map(analogRead(A3), 0, 915, -127, 127);
+    }        
+    sendPayload.joystick1[0] = constrain(joy0, -127, 127);
+    sendPayload.joystick1[1] = constrain(joy1, -127, 127);
+    sendPayload.joystick2[0] = constrain(joy2, -127, 127);
+    sendPayload.joystick2[1] = constrain(joy3, -127, 127);
 
-      sendPayload.analogButton = constrain((map(analogRead(A6), 0, 680, 0, 130)), 0, 130);
-      //sendPayload.batt = map(analogRead(A7), 0, 1023, 0, 255);
+    sendPayload.digitalButton[0] = digitalRead(0);
+    sendPayload.digitalButton[1] = digitalRead(2);
+    sendPayload.digitalButton[2] = digitalRead(3);
+    sendPayload.digitalButton[3] = digitalRead(4);
+    sendPayload.digitalButton[4] = digitalRead(7);
+    sendPayload.digitalButton[5] = digitalRead(8);
 
-      radio.write(&sendPayload, sizeof(sendPayload));
-      radio.startListening();
-    }
+    int but = 0;
+    but = map(analogRead(A6), 0, 700, 0, 130);
+    sendPayload.analogButton = constrain(but, 0, 130);
+
+    radio.write(&sendPayload, sizeof(sendPayload));
+    radio.startListening();
   }
 }

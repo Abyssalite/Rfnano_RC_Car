@@ -20,16 +20,17 @@
 #define THRESHOLD 18000
 #define DT 0.01f
 #define GYRO_PERIOD 10  // 10ms
-#define RF_PERIOD 500   // 500ms
-#define DISP_PERIOD 51  // 50ms
-#define TOF_PERIOD 201  // 200ms
-#define US_PERIOD 199   // 200ms
+#define RF_PERIOD 300   // 500ms
+#define DISP_PERIOD 20  // 20ms
+#define TOF_PERIOD 101  // 101ms
+#define US_PERIOD 100   // 100ms
 #define CONNECTION_TIMEOUT 500
 
 const byte address[6] = "1Node";  // Same address on BOTH boards
 
 uint8_t displayIndex = 0;
 uint8_t displayBuffer[8] = { 0 };
+bool isClear = false;
 
 unsigned long lastReceiveTime = 0;
 unsigned long rfTimer = 0;
@@ -64,7 +65,6 @@ struct ReceivePayload {
   int8_t joystick2[2];
   uint8_t digitalButton[6];
   uint8_t analogButton;
-  //uint8_t batt;
 };
 ReceivePayload receivePayload;
 
@@ -142,7 +142,9 @@ void setServo(int8_t position, uint8_t* servoValue, uint8_t servo) {
   position = constrain(position, -4, 4);
 
   int16_t temp = *servoValue + position;
-  *servoValue = (uint8_t)constrain(temp, 5, 175);
+  if (servo == 9)
+    *servoValue = (uint8_t)constrain(temp, 10, 170);
+  else  *servoValue = (uint8_t)constrain(temp, 5, 175);
 
   tempBuffer[0] = servo;
   tempBuffer[1] = *servoValue;
@@ -237,6 +239,15 @@ void updateBuffer() {
   }
 }
 
+void reconnectSpinner() {
+  if (displayIndex == 3) {
+    displayBuffer[6] = displayBuffer[6] ^= 0b1001110;
+  }
+  if (displayIndex == 7) {
+    displayBuffer[1] = displayBuffer[1] ^= 0b1111000;
+  }
+}
+
 void deviceInit() {
   digitalWrite(XSHUT_LEFT, LOW);
   digitalWrite(XSHUT_RIGHT, LOW);
@@ -256,7 +267,7 @@ void deviceInit() {
   sensorLeft.setAddress(0x31);
   sensorLeft.setTimeout(60);
   sensorLeft.setMeasurementTimingBudget(33000);
-  sensorLeft.startContinuous(200);
+  sensorLeft.startContinuous(100);
 
   digitalWrite(XSHUT_RIGHT, HIGH);
   delay(50);
@@ -265,7 +276,7 @@ void deviceInit() {
   sensorRight.setAddress(0x32);
   sensorRight.setTimeout(60);
   sensorRight.setMeasurementTimingBudget(33000);
-  sensorRight.startContinuous(200);
+  sensorRight.startContinuous(100);
 
   digitalWrite(XSHUT_MIDDLE, HIGH);
   delay(50);
@@ -275,7 +286,7 @@ void deviceInit() {
   sensorFront.setTimeout(60);
   sensorFront.setDistanceMode(VL53L1X::Long);
   sensorFront.setMeasurementTimingBudget(33000);
-  sensorFront.startContinuous(200);
+  sensorFront.startContinuous(100);
 
   delay(50);
 
@@ -333,30 +344,38 @@ void loop() {
   if (radio.available()) {
     radio.read(&receivePayload, sizeof(receivePayload));
 
+    if (isClear) isClear = !isClear;
     lastReceiveTime = now;
     updateBuffer();
   }
 
-
   if (now - lastReceiveTime >= CONNECTION_TIMEOUT) {
-    memset(&sendPayload, 0, sizeof(sendPayload));
+    memset(&receivePayload, 0, sizeof(receivePayload));
+    memset(receivePayload.digitalButton, 1, sizeof(receivePayload.digitalButton));
     moveRobot(false);
-  }
 
-  if (now - dispTimer >= DISP_PERIOD) {
-    dispTimer = now;
-    uint8_t tempBuffer[2] = { displayIndex + 1, displayBuffer[displayIndex] };
-    masterCallInt(9, tempBuffer, 2);
-
-    displayIndex++;
-    if (displayIndex > 7) displayIndex = 0;
-  }
-
-  if (analogRead(A7) > 700) {
-    moveRobot();
+    if (isClear) {
+      memset(displayBuffer, 0, sizeof(displayBuffer));
+      isClear = !isClear;
+    }
+    reconnectSpinner();
   }
 
   if (analogRead(A7) >= 550) {
+    if (now - gyroTimer >= GYRO_PERIOD) {
+      gyroTimer = now;
+      Vector norm = mpu.readNormalizeGyro();
+
+      gyro[0] += (int16_t)(norm.XAxis * GYRO_PERIOD);  // period(ms) / 1000 * 1000(scale)
+      gyro[1] += (int16_t)(norm.YAxis * GYRO_PERIOD);
+      gyro[2] += (int16_t)(norm.ZAxis * GYRO_PERIOD);
+
+      for (uint8_t i = 0; i < 3; i++) {
+        int16_t temp = (abs(gyro[i]) > THRESHOLD) ? gyro[i] * -1 : gyro[i];
+        gyro[i] = constrain(temp, -THRESHOLD, THRESHOLD);        
+      }
+    }
+    
     moveHead();
 
     if (now - tofTimer >= TOF_PERIOD) {
@@ -373,20 +392,19 @@ void loop() {
       usSensors[0] = masterCallInt(7, B(0, 1), 2);
       usSensors[1] = masterCallInt(7, B(2, 3), 2);
     }
+  }
 
-    if (now - gyroTimer >= GYRO_PERIOD) {
-      gyroTimer = now;
-      Vector norm = mpu.readNormalizeGyro();
+  if (analogRead(A7) > 700) {
+    moveRobot();
+  }
 
-      gyro[0] += (int16_t)(norm.XAxis * GYRO_PERIOD);  // period(ms) / 1000 * 1000(scale)
-      gyro[1] += (int16_t)(norm.YAxis * GYRO_PERIOD);
-      gyro[2] += (int16_t)(norm.ZAxis * GYRO_PERIOD);
+  if (now - dispTimer >= DISP_PERIOD) {
+    dispTimer = now;
+    uint8_t tempBuffer[2] = { displayIndex + 1, displayBuffer[displayIndex] };
+    masterCallInt(9, tempBuffer, 2);
 
-      for (uint8_t i = 0; i < 3; i++) {
-        int16_t temp = (abs(gyro[i]) > THRESHOLD) ? gyro[i] * -1 : gyro[i];
-        gyro[i] = constrain(temp, -THRESHOLD, THRESHOLD);        
-      }
-    }
+    displayIndex++;
+    if (displayIndex > 7) displayIndex = 0;
   }
 
   // 2. TRANSMIT PART
