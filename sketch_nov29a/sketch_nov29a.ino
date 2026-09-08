@@ -3,7 +3,6 @@
 #include <RF24.h>
 #include <SoftPWM.h>
 #include <MPU6050.h>
-#include <VL53L1X.h>
 #include <VL53L0X.h>
 
 #define B(...) \
@@ -11,11 +10,11 @@
     __VA_ARGS__ \
   }
 #define SLAVE_ADDR 8
-#define CE_PIN 10
-#define CSN_PIN 9
-#define XSHUT_LEFT 1
-#define XSHUT_MIDDLE 6
-#define XSHUT_RIGHT 0
+#define CE_PIN 7
+#define CSN_PIN 8
+#define XSHUT_LEFT 9
+#define XSHUT_MIDDLE A7
+#define XSHUT_RIGHT 10
 
 #define THRESHOLD 18000
 #define DT 0.01f
@@ -69,7 +68,7 @@ struct ReceivePayload {
 ReceivePayload receivePayload;
 
 RF24 radio(CE_PIN, CSN_PIN);
-VL53L1X sensorFront;
+VL53L0X sensorFront;
 VL53L0X sensorRight;
 VL53L0X sensorLeft;
 MPU6050 mpu;
@@ -284,7 +283,6 @@ void deviceInit() {
   sensorFront.init();
   sensorFront.setAddress(0x30);
   sensorFront.setTimeout(60);
-  sensorFront.setDistanceMode(VL53L1X::Long);
   sensorFront.setMeasurementTimingBudget(33000);
   sensorFront.startContinuous(100);
 
@@ -306,11 +304,11 @@ void setup() {
   pinMode(XSHUT_RIGHT, OUTPUT);
   pinMode(XSHUT_MIDDLE, OUTPUT);
 
-  wdt_enable(WDTO_1S);
+  //wdt_enable(WDTO_1S);
 
   Wire.begin();
   Wire.setClock(200000);  // use 200 kHz I2C
-  Wire.setWireTimeout(40000, false);
+  //Wire.setWireTimeout(40000, false);
   radio.begin();
 
   radio.setAutoAck(false);
@@ -337,7 +335,7 @@ void setup() {
 }
 
 void loop() {
-  wdt_reset();
+  //wdt_reset();
   unsigned long now = millis();
 
   // 1. RECEIVE PART
@@ -361,40 +359,39 @@ void loop() {
     reconnectSpinner();
   }
 
-  if (analogRead(A7) >= 550) {
-    if (now - gyroTimer >= GYRO_PERIOD) {
-      gyroTimer = now;
-      Vector norm = mpu.readNormalizeGyro();
+  if (now - gyroTimer >= GYRO_PERIOD) {
+    gyroTimer = now;
+    Vector norm = mpu.readNormalizeGyro();
 
-      gyro[0] += (int16_t)(norm.XAxis * GYRO_PERIOD);  // period(ms) / 1000 * 1000(scale)
-      gyro[1] += (int16_t)(norm.YAxis * GYRO_PERIOD);
-      gyro[2] += (int16_t)(norm.ZAxis * GYRO_PERIOD);
+    gyro[0] += (int16_t)(norm.XAxis * GYRO_PERIOD);  // period(ms) / 1000 * 1000(scale)
+    gyro[1] += (int16_t)(norm.YAxis * GYRO_PERIOD);
+    gyro[2] += (int16_t)(norm.ZAxis * GYRO_PERIOD);
 
-      for (uint8_t i = 0; i < 3; i++) {
-        int16_t temp = (abs(gyro[i]) > THRESHOLD) ? gyro[i] * -1 : gyro[i];
-        gyro[i] = constrain(temp, -THRESHOLD, THRESHOLD);        
-      }
+    for (uint8_t i = 0; i < 3; i++) {
+      int16_t temp = (abs(gyro[i]) > THRESHOLD) ? gyro[i] * -1 : gyro[i];
+      gyro[i] = constrain(temp, -THRESHOLD, THRESHOLD);        
     }
-    
-    moveHead();
+  }  
 
-    if (now - tofTimer >= TOF_PERIOD) {
-      tofSensors[0] = 0;//sensorFront.readRangeContinuousMillimeters(false);
-      tofSensors[1] = sensorLeft.readRangeContinuousMillimeters();
-      tofSensors[2] = sensorRight.readRangeContinuousMillimeters();
+  if (now - tofTimer >= TOF_PERIOD) {
+    tofSensors[0] = 0;//sensorFront.readRangeContinuousMillimeters();
+    tofSensors[1] = sensorLeft.readRangeContinuousMillimeters();
+    tofSensors[2] = sensorRight.readRangeContinuousMillimeters();
 
-      masterCallIntArray(5, B(7, 8, 12, 13, 14, 15, 16, 17), irValues, 8);
-    }
-
-    if (now - usTimer >= US_PERIOD) {
-      usTimer = now;
-
-      usSensors[0] = masterCallInt(7, B(0, 1), 2);
-      usSensors[1] = masterCallInt(7, B(2, 3), 2);
-    }
+    masterCallIntArray(5, B(7, 8, 12, 13, 14, 15, 16, 17), irValues, 8);
   }
 
-  if (analogRead(A7) > 700) {
+  if (now - usTimer >= US_PERIOD) {
+    usTimer = now;
+
+    usSensors[0] = masterCallInt(7, B(0, 1), 2);
+    usSensors[1] = masterCallInt(7, B(2, 3), 2);
+  }
+
+  if (analogRead(A6) >= 550) {
+      moveHead();
+  }
+  if (analogRead(A6) > 700) {
     moveRobot();
   }
 
@@ -433,7 +430,7 @@ void loop() {
     sendPayload.usSensors[0] = usSensors[0];
     sendPayload.usSensors[1] = usSensors[1];
 
-    sendPayload.batt = map(analogRead(A7), 0, 1023, 0, 255);
+    sendPayload.batt = map(analogRead(A6), 0, 1023, 0, 255);
 
     radio.write(&sendPayload, sizeof(sendPayload));
     radio.startListening();

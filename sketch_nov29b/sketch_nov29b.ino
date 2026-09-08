@@ -4,8 +4,8 @@
 
 U8G2_SSD1309_128X64_NONAME0_1_HW_I2C u8g2(U8G2_R0, /* reset=*/ U8X8_PIN_NONE);
 
-#define CE_PIN  10
-#define CSN_PIN  9
+#define CE_PIN  7
+#define CSN_PIN  8
 #define RF_PERIOD 30 // 30ms
 
 RF24 radio(CE_PIN, CSN_PIN);
@@ -63,7 +63,7 @@ void updateDisplay() {
     u8g2.print("Vcc: ");
     u8g2.print(map(receivePayload.batt, 0, 255, 0, 1023));
     u8g2.print(" ");
-    u8g2.print(analogRead(A7));
+    u8g2.print(analogRead(A6));
 
     // Line 4: Digital IR
     u8g2.setCursor(0, 50);
@@ -93,12 +93,12 @@ void setup() {
   pinMode(2, INPUT_PULLUP);
   pinMode(3, INPUT_PULLUP);
   pinMode(4, INPUT_PULLUP);
-  pinMode(7, INPUT_PULLUP);
-  pinMode(8, INPUT_PULLUP);
+  pinMode(5, INPUT_PULLUP);
+  pinMode(6, INPUT_PULLUP);
 
   Wire.begin();
   Wire.setClock(200000); // use 200 kHz I2C
-  Wire.setWireTimeout(40000, false);
+  //Wire.setWireTimeout(40000, false);
   radio.begin();
 
   radio.setAutoAck(false);
@@ -123,7 +123,7 @@ void setup() {
   do {
     u8g2.setCursor(0, 36);
     u8g2.print("Batt: ");
-    u8g2.print(analogRead(A7));
+    u8g2.print(analogRead(A6));
 
   } while (u8g2.nextPage());           // Render page by page
 }
@@ -146,7 +146,7 @@ void loop() {
     int joy2 = 0;
     int joy3 = 0;
 
-    if ((analogRead(A7) > 550) && (analogRead(A7) < 910)) {
+    if ((analogRead(A6) > 550)) {
       joy0 = map(analogRead(A0), 0, 915, -127, 127);
       joy1 = map(analogRead(A1), 0, 915, -127, 127);
       joy2 = map(analogRead(A2), 0, 915, -127, 127);
@@ -161,11 +161,11 @@ void loop() {
     sendPayload.digitalButton[1] = digitalRead(2);
     sendPayload.digitalButton[2] = digitalRead(3);
     sendPayload.digitalButton[3] = digitalRead(4);
-    sendPayload.digitalButton[4] = digitalRead(7);
-    sendPayload.digitalButton[5] = digitalRead(8);
+    sendPayload.digitalButton[4] = digitalRead(5);
+    sendPayload.digitalButton[5] = digitalRead(6);
 
     int but = 0;
-    but = map(analogRead(A6), 0, 700, 0, 130);
+    but = map(analogRead(A7), 0, 700, 0, 130);
     sendPayload.analogButton = constrain(but, 0, 130);
 
     radio.write(&sendPayload, sizeof(sendPayload));
