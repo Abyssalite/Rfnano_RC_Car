@@ -97,8 +97,10 @@ void setup() {
   pinMode(6, INPUT_PULLUP);
 
   Wire.begin();
-  Wire.setClock(200000); // use 200 kHz I2C
-  //Wire.setWireTimeout(40000, false);
+  Wire.setClock(400000); // use 200 kHz I2C
+  #if defined(WIRE_HAS_TIMEOUT) || defined(WIRE_TIMEOUT)
+    Wire.setWireTimeout(25000, true);
+  #endif
   radio.begin();
 
   radio.setAutoAck(false);

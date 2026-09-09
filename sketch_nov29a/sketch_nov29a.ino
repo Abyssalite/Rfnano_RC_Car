@@ -2,14 +2,13 @@
 #include <Wire.h>
 #include <RF24.h>
 #include <SoftPWM.h>
-#include <MPU6050.h>
 #include <VL53L0X.h>
+#include "I2CMaster.h"
 
 #define B(...) \
   (const uint8_t[]) { \
     __VA_ARGS__ \
   }
-#define SLAVE_ADDR 8
 #define CE_PIN 7
 #define CSN_PIN 8
 #define XSHUT_LEFT 9
@@ -17,8 +16,6 @@
 #define XSHUT_RIGHT 10
 
 #define THRESHOLD 18000
-#define DT 0.01f
-#define GYRO_PERIOD 10  // 10ms
 #define RF_PERIOD 300   // 500ms
 #define DISP_PERIOD 20  // 20ms
 #define TOF_PERIOD 101  // 101ms
@@ -33,7 +30,6 @@ bool isClear = false;
 
 unsigned long lastReceiveTime = 0;
 unsigned long rfTimer = 0;
-unsigned long gyroTimer = 0;
 unsigned long dispTimer = 0;
 unsigned long tofTimer = 0;
 unsigned long usTimer = 0;
@@ -71,47 +67,13 @@ RF24 radio(CE_PIN, CSN_PIN);
 VL53L0X sensorFront;
 VL53L0X sensorRight;
 VL53L0X sensorLeft;
-MPU6050 mpu;
 
-int16_t gyro[3] = {0};
+int32_t gyro[3] = {0};
 uint8_t servoValue[2] = {90};
-uint8_t irValues[8];
-uint16_t tofSensors[3];
-uint16_t usSensors[2];
+uint16_t irValues[8];
+uint32_t tofSensors[3];
+uint32_t usSensors[2];
 bool isStopped = false;
-
-// int return
-uint16_t masterCallInt(uint8_t func, const uint8_t* args = nullptr, uint8_t len = 0) {
-  if (!args || len <= 0) return;
-  Wire.beginTransmission((uint8_t)SLAVE_ADDR);
-  Wire.write(func);
-  Wire.write(args, len);
-  if (Wire.endTransmission(true) != 0) return 30054;
-
-  Wire.requestFrom((uint8_t)SLAVE_ADDR, (uint8_t)2);
-  if (Wire.available() < 2) return 30054;
-
-  uint16_t value = 0;
-  Wire.readBytes((uint8_t*)&value, 2);
-  return value;
-}
-
-// 8-byte array return
-uint8_t masterCallIntArray(uint8_t func, const uint8_t* args, uint8_t* results, uint8_t len = 0) {
-  if (!func || len != 8) return;
-  Wire.beginTransmission((uint8_t)SLAVE_ADDR);
-  Wire.write(func);
-  Wire.write(args, 8);
-  if (Wire.endTransmission(true) != 0) return 254;
-
-  Wire.requestFrom((uint8_t)SLAVE_ADDR, (uint8_t)8);
-  if (Wire.available() < 8) return 254;
-
-  uint8_t buffer[8];
-  Wire.readBytes(buffer, 8);
-  memcpy(results, buffer, 8);
-  return 0;
-}
 
 void setMotor(uint8_t pins[2], int8_t speed, uint8_t i) {
   speed = map(speed, -127, 127, -100, 100);
@@ -147,7 +109,7 @@ void setServo(int8_t position, uint8_t* servoValue, uint8_t servo) {
 
   tempBuffer[0] = servo;
   tempBuffer[1] = *servoValue;
-  masterCallInt(8, tempBuffer, 2);
+  //masterCallInt(8, tempBuffer, 2);
 }
 
 void moveRobot(bool canMove = true) {
@@ -191,7 +153,7 @@ void moveHead() {
   setServo(receivePayload.joystick1[0], &servoValue[1], 9);    // y-axis
 }
 
-void updateBuffer() {
+/*void updateBuffer() {
   // === 1. Gauges for first 5 analog irValues (digits 1 to 5) ===
 
   int8_t gauges[5] = {
@@ -236,7 +198,7 @@ void updateBuffer() {
 
     displayBuffer[i + 5] = pattern;  // digits 5,6,7
   }
-}
+}*/
 
 void reconnectSpinner() {
   if (displayIndex == 3) {
@@ -251,13 +213,6 @@ void deviceInit() {
   digitalWrite(XSHUT_LEFT, LOW);
   digitalWrite(XSHUT_RIGHT, LOW);
   digitalWrite(XSHUT_MIDDLE, LOW);
-
-  delay(50);
-
-  mpu.begin(MPU6050_SCALE_2000DPS, MPU6050_RANGE_2G);
-  // Calibrate gyroscope. The calibration must be at rest.
-  mpu.calibrateGyro();
-  mpu.setThreshold(3);
 
   digitalWrite(XSHUT_LEFT, HIGH);
   delay(50);
@@ -288,15 +243,13 @@ void deviceInit() {
 
   delay(50);
 
-  masterCallInt(2, B(INPUT, 14, 15, 16, 17, 1), 6);  // set INPUT IR, US
-  masterCallInt(2, B(INPUT, 7, 8, 12, 13, 3), 6);    // set INPUT IR, US
+  masterCallUInt32(2, B(INPUT, 14, 15, 16, 17, 1), 6);  // set INPUT IR, US
+  masterCallUInt32(2, B(INPUT, 7, 8, 12, 13, 3), 6);    // set INPUT IR, US
 
-  masterCallInt(2, B(OUTPUT, 0, 2, 5, 6), 5);        // set OUTPUT US, PWM
-  masterCallInt(2, B(OUTPUT, 4, 20, 21), 4);         // set OUTPUT 7seg
+  masterCallUInt32(2, B(OUTPUT, 0, 2, 5, 6), 5);        // set OUTPUT US, PWM
+  masterCallUInt32(2, B(OUTPUT, 4, 20, 21), 4);         // set OUTPUT 7seg
 
-  masterCallInt(9, 1, 1);      // Init 7seg
-  masterCallInt(8, B(0), 1);   // Init Servo
-  masterCallInt(11, B(0), 1);  // Init Tone
+  masterCallUInt32(9, 1, 1);      // Init 7seg
 }
 
 void setup() {
@@ -307,8 +260,10 @@ void setup() {
   //wdt_enable(WDTO_1S);
 
   Wire.begin();
-  Wire.setClock(200000);  // use 200 kHz I2C
-  //Wire.setWireTimeout(40000, false);
+  Wire.setClock(400000); // use 200 kHz I2C
+  #if defined(WIRE_HAS_TIMEOUT) || defined(WIRE_TIMEOUT)
+    Wire.setWireTimeout(25000, true);
+  #endif
   radio.begin();
 
   radio.setAutoAck(false);
@@ -322,10 +277,10 @@ void setup() {
 
   SoftPWMBegin();
 
-  SoftPWMSet(2, 0);
+  SoftPWMSet(3, 0);
   SoftPWMSet(4, 0);
-  SoftPWMSet(7, 0);
-  SoftPWMSet(8, 0);
+  SoftPWMSet(5, 0);
+  SoftPWMSet(6, 0);
   SoftPWMSet(A0, 0);
   SoftPWMSet(A1, 0);
   SoftPWMSet(A2, 0);
@@ -344,7 +299,7 @@ void loop() {
 
     if (isClear) isClear = !isClear;
     lastReceiveTime = now;
-    updateBuffer();
+    //updateBuffer();
   }
 
   if (now - lastReceiveTime >= CONNECTION_TIMEOUT) {
@@ -359,33 +314,19 @@ void loop() {
     reconnectSpinner();
   }
 
-  if (now - gyroTimer >= GYRO_PERIOD) {
-    gyroTimer = now;
-    Vector norm = mpu.readNormalizeGyro();
-
-    gyro[0] += (int16_t)(norm.XAxis * GYRO_PERIOD);  // period(ms) / 1000 * 1000(scale)
-    gyro[1] += (int16_t)(norm.YAxis * GYRO_PERIOD);
-    gyro[2] += (int16_t)(norm.ZAxis * GYRO_PERIOD);
-
-    for (uint8_t i = 0; i < 3; i++) {
-      int16_t temp = (abs(gyro[i]) > THRESHOLD) ? gyro[i] * -1 : gyro[i];
-      gyro[i] = constrain(temp, -THRESHOLD, THRESHOLD);        
-    }
-  }  
-
   if (now - tofTimer >= TOF_PERIOD) {
     tofSensors[0] = 0;//sensorFront.readRangeContinuousMillimeters();
     tofSensors[1] = sensorLeft.readRangeContinuousMillimeters();
     tofSensors[2] = sensorRight.readRangeContinuousMillimeters();
 
-    masterCallIntArray(5, B(7, 8, 12, 13, 14, 15, 16, 17), irValues, 8);
+    masterCallUInt16Array(5, B(7, 8, 12, 13, 14, 15, 16, 17), 8, irValues, 8);
   }
 
   if (now - usTimer >= US_PERIOD) {
     usTimer = now;
 
-    usSensors[0] = masterCallInt(7, B(0, 1), 2);
-    usSensors[1] = masterCallInt(7, B(2, 3), 2);
+    usSensors[0] = masterCallUInt32(7, B(0, 1), 2);
+    usSensors[1] = masterCallUInt32(7, B(2, 3), 2);
   }
 
   if (analogRead(A6) >= 550) {
@@ -398,7 +339,7 @@ void loop() {
   if (now - dispTimer >= DISP_PERIOD) {
     dispTimer = now;
     uint8_t tempBuffer[2] = { displayIndex + 1, displayBuffer[displayIndex] };
-    masterCallInt(9, tempBuffer, 2);
+    //masterCallInt(9, tempBuffer, 2);
 
     displayIndex++;
     if (displayIndex > 7) displayIndex = 0;
