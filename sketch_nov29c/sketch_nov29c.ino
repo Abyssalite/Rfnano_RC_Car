@@ -1,7 +1,8 @@
+#include <avr/wdt.h>
 #include <Wire.h>
 #include <Servo.h>
 #include <LedControl.h> 
-#include <MPU6050.h>
+#include <MPU6050_light.h>
 
 #define SLAVE_ADDR 8
 
@@ -9,48 +10,66 @@
 #define DIN 11
 #define CS  12
 #define CLK 13
-#define GYRO_PERIOD 10  // 10ms
-#define TIME_STEP 0.01f
+#define GYRO_PERIOD 20  // 10ms
 
 // Global objects
 Servo servo9;
 Servo servo10;
 LedControl lc = LedControl(DIN, CLK, CS, 1);  // 1 device
-MPU6050 mpu;
+MPU6050 mpu(Wire);
 
+byte mpuDetected = 1;
 unsigned long gyroTimer = 0;
 float pitch = 0;
 float roll = 0;
 float yaw = 0;
 
 // Communication buffers
-volatile uint8_t args[8] = {0};
+volatile uint8_t args[12] = {0};
 volatile uint8_t argCount = 0;
 
 union {
-  volatile uint32_t singleUInt;
-
-  volatile uint32_t uintArray32[4];
-  volatile int32_t  intArray32[4];
+  volatile uint16_t singleUInt;
 
   volatile uint16_t uintArray16[8];
+  volatile int16_t  intArray16[8];
+
   volatile uint8_t  bytes[16];       // raw byte access
 } result;
 
 volatile uint8_t replyLength = 0;
 
-void setServo(uint8_t ch, uint8_t angle) {
-  angle = constrain(angle, 0, 180);
-  if (ch == 9) {
-    if (!servo9.attached()) servo9.attach(9);
-    servo9.write(angle);
-  } else if (ch == 10) {
-    if (!servo10.attached()) servo10.attach(10);
-    servo10.write(angle);
-  }
+void moveServo(uint8_t ch, uint8_t whole, uint8_t remainder) {
+  uint16_t angle = whole * 10 + remainder;
+  uint16_t us = map(angle, 0, 1800, 500, 2500);
 
-  replyLength = 4;
-  result.singleUInt = 0;
+  if (ch == 9) {
+    if (!servo9.attached()) {
+      servo9.attach(9, 500, 2500);
+    }
+    servo9.writeMicroseconds(us);
+  }
+  else if (ch == 10) {
+    if (!servo10.attached()) {
+      servo10.attach(10, 500, 2500);
+    }
+    servo10.writeMicroseconds(us);
+  }
+}
+
+void setServo() {
+  if (argCount == 3) {
+    replyLength = 2;
+    moveServo(args[0], args[1], args[2]);
+    result.singleUInt = 0;
+  }
+  if (argCount == 6) {
+    replyLength = 2;
+
+    moveServo(args[0], args[1], args[2]);
+    moveServo(args[3], args[4], args[5]);
+    result.singleUInt = 0;
+  }
 }
 
 void playTone(uint8_t pin, uint8_t value, uint8_t mul) {
@@ -58,10 +77,10 @@ void playTone(uint8_t pin, uint8_t value, uint8_t mul) {
     noTone(pin);
     return;
   }
-  uint16_t freq = constrain((uint16_t)value * mul, 31, 16000);  // tone() min ≈ 31 Hz
+  uint16_t freq = constrain((uint16_t)value * (uint16_t)mul, 31, 16000);  // tone() min ≈ 31 Hz
   tone(pin, freq);
 
-  replyLength = 4;
+  replyLength = 2;
   result.singleUInt = 0;
 }
 
@@ -74,14 +93,14 @@ void read8Pin() {
 
   for (uint8_t i = 0; i < 8; i++) {
     if (args[i] < 14)
-      result.uintArray16[i] = digitalRead(args[i]);
+      result.intArray16[i] = digitalRead(args[i]);
     else if (args[i] < 22)                       // A0–A7 on Nano
-      result.uintArray16[i] = analogRead(args[i]);
+      result.intArray16[i] = analogRead(args[i]);
   }
 }
 
 void read1Pin() {
-  replyLength = 4;
+  replyLength = 2;
 
   if (args[0] < 14)
     result.singleUInt = digitalRead(args[0]);
@@ -94,16 +113,16 @@ void writePin() {
   for (uint8_t i = 1; i < argCount; i++)
     digitalWrite(args[i], value);
 
-  replyLength = 4;
+  replyLength = 2;
   result.singleUInt = 0;
 }
 
 void setPin() {
   bool value = args[0];
   for (uint8_t i = 1; i < argCount; i++)
-    pinMode(args[i], value ? OUTPUT : INPUT);
+    pinMode(args[i], value);
 
-  replyLength = 4;
+  replyLength = 2;
   result.singleUInt = 0;
 }
 
@@ -112,19 +131,24 @@ void initDisp() {
   lc.setIntensity(0, 8);       // 0–15
   lc.clearDisplay(0);
 
-  replyLength = 4;
+  replyLength = 2;
   result.singleUInt = 0;
 }
 
-void maxWrite(uint8_t reg, uint8_t val) {
+void maxWrite() {
   // LedControl uses digit 0–7 and a value (0–15 for digits, or raw segment byte)
-  lc.setRow(0, reg, val);
+  for (uint8_t i = 0; i < argCount; i++)
+      lc.setRow(0, i, args[i]);
+  if (argCount < 8) {
+    for (uint8_t i = argCount; i < 8; i++)
+      lc.setRow(0, i, 0);
+  }
 
-  replyLength = 4;
+  replyLength = 2;
   result.singleUInt = 0;
 }
 
-uint32_t calculateUltrasonicDistance(uint8_t trigger, uint8_t echo) {
+uint16_t calculateUltrasonicDistance(uint8_t trigger, uint8_t echo) {
   digitalWrite(trigger, LOW);
   delayMicroseconds(2);
   digitalWrite(trigger, HIGH);
@@ -136,20 +160,27 @@ uint32_t calculateUltrasonicDistance(uint8_t trigger, uint8_t echo) {
   if (duration == 0) {
     return 0;
   }
-
-  return (duration * 343UL) / 2000UL;
+  return static_cast<int16_t>((duration * 343UL) / 2000UL);
 }
 
 void getUltrasonicDistance() {
   if (argCount == 2) {
-    replyLength = 4;
+    replyLength = 2;
     result.singleUInt = calculateUltrasonicDistance(args[0], args[1]);
   }
   if (argCount == 4) {
-    replyLength = 8;
-    result.uintArray32[0] = calculateUltrasonicDistance(args[0], args[1]);
-    result.uintArray32[1] = calculateUltrasonicDistance(args[2], args[3]);
+    replyLength = 4;
+    result.uintArray16[0] = calculateUltrasonicDistance(args[0], args[1]);
+    result.uintArray16[1] = calculateUltrasonicDistance(args[2], args[3]);
   }
+}
+
+void getMPU() {
+  replyLength = 6;
+  result.intArray16[0] = static_cast<int16_t>(pitch * 100.0f);
+  result.intArray16[1] = static_cast<int16_t>(roll * 100.0f);
+  result.intArray16[2] = static_cast<int16_t>(yaw * 100.0f);
+
 }
 
 void switchFunction(uint8_t functionId) {
@@ -176,25 +207,30 @@ void switchFunction(uint8_t functionId) {
       break;
 
     case 8: // servo
-      if (argCount == 2)
-        setServo(args[0], args[1]);
+      if (argCount == 3 ||  argCount == 6) setServo();
       break;
 
     case 9: // display
-      if (argCount == 1)
-        initDisp();
-      if (argCount == 2)
-        maxWrite(args[0], args[1]);
+      if (argCount > 0 && argCount < 9)
+        maxWrite();
       break;
 
     case 10: // PWM / analogWrite
-      if (argCount == 2)
+      if (argCount == 2){
         analogWrite(args[0], constrain(args[1], 0, 255));
+        replyLength = 2;
+        result.singleUInt = 0;
+      }
       break;
 
     case 11: // tone
       if (argCount == 3)
         playTone(args[0], args[1], args[2]);
+      break;
+
+    case 12: // mpu
+      if (argCount == 1)
+        getMPU();
       break;
 
     default:
@@ -221,32 +257,34 @@ void requestEvent() {
 }
 
 void setup() {
+  //Serial.begin(9600);
+  wdt_enable(WDTO_4S);
+
   Wire.begin(SLAVE_ADDR);
-  Wire.setClock(400000); // use 200 kHz I2C
-  #if defined(WIRE_HAS_TIMEOUT) || defined(WIRE_TIMEOUT)
-    Wire.setWireTimeout(25000, true);
-  #endif
+  Wire.setClock(200000);  // use 200 kHz I2C
 
   Wire.onReceive(receiveEvent);
   Wire.onRequest(requestEvent);
 
-  delay(50);
-
-  mpu.begin(MPU6050_SCALE_2000DPS, MPU6050_RANGE_2G);
-  // Calibrate gyroscope. The calibration must be at rest.
-  mpu.calibrateGyro();
-  mpu.setThreshold(3);
-
+  initDisp();
+  mpuDetected = !mpu.begin();
+  
+  if (mpuDetected) { 
+    delay(1000);
+    mpu.calcOffsets(); // gyro and accelero
+  }
 }
 
 void loop() {
+  wdt_reset();
   unsigned long now = millis();
-  if (now - gyroTimer >= GYRO_PERIOD) {
-    gyroTimer = now;
-    Vector norm = mpu.readNormalizeGyro();
 
-    pitch = pitch + norm.YAxis * TIME_STEP;
-    roll = roll + norm.XAxis * TIME_STEP;
-    yaw = yaw + norm.ZAxis * TIME_STEP;
+  if ((now - gyroTimer >= GYRO_PERIOD) && mpuDetected) {
+    gyroTimer += GYRO_PERIOD;
+    mpu.update();
+    // Get the filtered angles (in degrees)
+    roll  = mpu.getAngleX();       // X axis
+    pitch = mpu.getAngleY();       // Y axis
+    yaw   = mpu.getAngleZ();       // Z axis    
   }  
 }
