@@ -8,11 +8,15 @@ U8G2_SSD1309_128X64_NONAME0_1_HW_I2C u8g2(U8G2_R0, /* reset=*/ U8X8_PIN_NONE);
 #define CE_PIN  7
 #define CSN_PIN  8
 #define RF_PERIOD 40 // 30ms
+#define CONNECTION_TIMEOUT 500
 
 RF24 radio(CE_PIN, CSN_PIN);
 
 const byte address[6] = "1Node";
 unsigned long rfTimer = 0;
+unsigned long lastReceiveTime = 0;
+
+uint8_t spin = 0;
 
 struct SendPayload {
   int8_t joystick1[2];
@@ -89,6 +93,27 @@ void updateDisplay() {
   } while (u8g2.nextPage());           // Render page by page
 }
 
+void reconnectSpinner() {
+  u8g2.firstPage();
+    do {
+      // ===== TOP: Battery =====
+      u8g2.setCursor(33, 12);
+      u8g2.print("Batt: ");
+      u8g2.print(analogRead(A6));
+
+      // ===== MIDDLE: Spinner =====
+      const char spinner[] = { '|', '/', '-', '\\' }; 
+
+      u8g2.setCursor(58, 32); 
+      u8g2.print(spinner[spin]);
+
+      // ===== BOTTOM: Status =====
+      u8g2.setCursor(30, 50);
+      u8g2.print("Connecting");
+
+    } while (u8g2.nextPage());
+}
+
 void setup() {
   // Button pins
   pinMode(0, INPUT_PULLUP);
@@ -140,7 +165,14 @@ void loop() {
   // 1. RECEIVE PART
   if (radio.available()) {
     radio.read(&receivePayload, sizeof(receivePayload));
+
+    lastReceiveTime = now;
     updateDisplay();
+  }
+
+  if (now - lastReceiveTime >= CONNECTION_TIMEOUT) {
+    spin = (spin + 1) % 4;
+    reconnectSpinner();
   }
 
   // 2. TRANSMIT PART

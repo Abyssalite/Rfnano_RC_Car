@@ -9,11 +9,11 @@
   (const uint8_t[]) { \
     __VA_ARGS__ \
   }
-#define CE_PIN 10
-#define CSN_PIN 9
-#define XSHUT_LEFT 7
+#define CE_PIN 7
+#define CSN_PIN 8
+#define XSHUT_LEFT 9
 #define XSHUT_MIDDLE 0
-#define XSHUT_RIGHT 8
+#define XSHUT_RIGHT 10
 
 #define THRESHOLD 18000
 #define RF_PERIOD 200   // 300ms
@@ -310,14 +310,13 @@ void loop() {
     memset(receivePayload.digitalButton, 1, sizeof(receivePayload.digitalButton));
     moveRobot(0);
 
-    reconnectTicker++;
-    if (reconnectTicker > 253) reconnectTicker = 0;
+    reconnectTicker = (reconnectTicker + 1) % 2;
     reconnectSpinner();
   }
 
   if (now - tofTimer >= TOF_PERIOD) {
     tofTimer = now;
-    tofSensors[0] = 0;  //sensorFront.readRangeContinuousMillimeters();
+    tofSensors[0] = sensorFront.readRangeContinuousMillimeters();
     tofSensors[1] = sensorLeft.readRangeContinuousMillimeters();
     tofSensors[2] = sensorRight.readRangeContinuousMillimeters();
   }
