@@ -93,9 +93,13 @@ void read8Pin() {
 
   for (uint8_t i = 0; i < 8; i++) {
     if (args[i] < 14)
-      result.intArray16[i] = digitalRead(args[i]);
-    else if (args[i] < 22)                       // A0–A7 on Nano
-      result.intArray16[i] = analogRead(args[i]);
+            result.intArray16[i] = digitalRead(args[i]);
+    else if (args[i] < 20)                       
+      result.intArray16[i] = analogRead(args[i]); // A0–A5 on Nano
+    else if (args[i] == 20)                       
+      result.intArray16[i] = analogRead(6); // A6 on Nano
+    else if (args[i] == 21)                       
+      result.intArray16[i] = analogRead(7); // A7 on Nano
   }
 }
 
@@ -104,14 +108,21 @@ void read1Pin() {
 
   if (args[0] < 14)
     result.singleUInt = digitalRead(args[0]);
-  else if (args[0] < 22)
+  else if (args[0] < 20)
     result.singleUInt = analogRead(args[0]);
+  else if (args[0] == 20)                       
+    result.singleUInt = analogRead(6); // A6 on Nano
+  else if (args[0] == 21)                       
+    result.singleUInt = analogRead(7); // A7 on Nano
 }
 
 void writePin() {
   bool value = args[0];
-  for (uint8_t i = 1; i < argCount; i++)
+  for (uint8_t i = 1; i < argCount; i++) {
+    if (args[i] == 20 || args[i] == 21) continue;
+
     digitalWrite(args[i], value);
+  }
 
   replyLength = 2;
   result.singleUInt = 0;
@@ -119,8 +130,11 @@ void writePin() {
 
 void setPin() {
   bool value = args[0];
-  for (uint8_t i = 1; i < argCount; i++)
+  for (uint8_t i = 1; i < argCount; i++) {
+    if (args[i] == 20 || args[i] == 21) continue;
+
     pinMode(args[i], value);
+  }
 
   replyLength = 2;
   result.singleUInt = 0;
@@ -180,7 +194,6 @@ void getMPU() {
   result.intArray16[0] = static_cast<int16_t>(pitch * 100.0f);
   result.intArray16[1] = static_cast<int16_t>(roll * 100.0f);
   result.intArray16[2] = static_cast<int16_t>(yaw * 100.0f);
-
 }
 
 void switchFunction(uint8_t functionId) {
@@ -199,7 +212,7 @@ void switchFunction(uint8_t functionId) {
       break;
 
     case 5: // read 8 pins
-      if (argCount == 8) read8Pin();
+      if (argCount >= 4) read8Pin();
       break;
 
     case 7: // ultrasonic
@@ -267,7 +280,7 @@ void setup() {
   Wire.onRequest(requestEvent);
 
   initDisp();
-  mpuDetected = !mpu.begin();
+  mpuDetected = 0;//!mpu.begin();
   
   if (mpuDetected) { 
     delay(1000);

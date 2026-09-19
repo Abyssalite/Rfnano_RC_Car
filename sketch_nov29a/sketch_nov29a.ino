@@ -9,19 +9,20 @@
   (const uint8_t[]) { \
     __VA_ARGS__ \
   }
-#define CE_PIN 7
-#define CSN_PIN 8
-#define XSHUT_LEFT 9
+#define CE_PIN 10
+#define CSN_PIN 9
+#define XSHUT_LEFT 7
 #define XSHUT_MIDDLE 0
-#define XSHUT_RIGHT 10
+#define XSHUT_RIGHT 8
+#define RESET_PIN 1
 
 #define THRESHOLD 18000
-#define RF_PERIOD 200   // 300ms
-#define IR_PERIOD 110   // 30ms
-#define GYRO_PERIOD 60  // 20ms
-#define DISP_PERIOD 120  // 33ms
-#define TOF_PERIOD 80   // 45ms
-#define US_PERIOD 100    // 55ms
+#define RF_PERIOD 200
+#define IR_PERIOD 100
+#define GYRO_PERIOD 40 
+#define DISP_PERIOD 120
+#define TOF_PERIOD 60 
+#define US_PERIOD 80
 #define CONNECTION_TIMEOUT 500
 
 const byte address[6] = "1Node";  // Same address on BOTH boards
@@ -229,6 +230,7 @@ void deviceInit() {
   digitalWrite(XSHUT_LEFT, LOW);
   digitalWrite(XSHUT_RIGHT, LOW);
   digitalWrite(XSHUT_MIDDLE, LOW);
+  digitalWrite(RESET_PIN, LOW);
 
   digitalWrite(XSHUT_LEFT, HIGH);
   delay(100);
@@ -236,32 +238,35 @@ void deviceInit() {
   sensorLeft.setAddress(0x31);
   sensorLeft.setTimeout(50);
   sensorLeft.setMeasurementTimingBudget(33000);
-  sensorLeft.startContinuous(40);
+  sensorLeft.startContinuous(50);
 
   digitalWrite(XSHUT_RIGHT, HIGH);
   delay(100);
   sensorRight.init();
   sensorRight.setAddress(0x32);
-  sensorRight.setTimeout(50);                    // short timeout
-  sensorRight.setMeasurementTimingBudget(33000); // 33 ms (default)
-  sensorRight.startContinuous(40);
+  sensorRight.setTimeout(50);
+  sensorRight.setMeasurementTimingBudget(33000);
+  sensorRight.startContinuous(50);
 
   digitalWrite(XSHUT_MIDDLE, HIGH);
   delay(100);
   sensorFront.init();
-  sensorFront.setAddress(0x33);
-  sensorFront.setTimeout(50);                    // short timeout
-  sensorFront.setMeasurementTimingBudget(33000); // 33 ms (default)
-  sensorFront.startContinuous(40);
+  //sensorFront.setAddress(0x33);
+  sensorFront.setTimeout(50);
+  sensorFront.setMeasurementTimingBudget(33000);
+  sensorFront.startContinuous(50);
 
+  digitalWrite(RESET_PIN, HIGH);
   delay(100);
-  masterCallUInt16(2, B(INPUT, 0, 1, 3, 7, 8, 14, 16, 17, 20, 21), 11);  // set INPUT IR, US
+  masterCallUInt16(2, B(INPUT, 0, 1, 3, 7, 8, 14), 7);  // set INPUT IR, US
   masterCallUInt16(2, B(OUTPUT, 2, 4, 5, 6, 11, 12, 13, 15), 9);  // set OUTPUT US, PWM, OUTPUT 7seg
 }
 
 void setup() {
   pinMode(XSHUT_LEFT, OUTPUT);
   pinMode(XSHUT_RIGHT, OUTPUT);
+  pinMode(XSHUT_MIDDLE, OUTPUT);
+  pinMode(RESET_PIN, OUTPUT);
 
   //Serial.begin(9600);
   wdt_enable(WDTO_2S);
@@ -320,7 +325,7 @@ void loop() {
     tofSensors[1] = sensorLeft.readRangeContinuousMillimeters();
     tofSensors[2] = sensorRight.readRangeContinuousMillimeters();
   }
-  if (now - usTimer >= IR_PERIOD) {
+  if (now - irTimer >= IR_PERIOD) {
     irTimer = now;
     masterCallInt16Array(5, B(0, 1, 7, 8, 16, 17, 20, 21), 8, irValues, 8);
   }
@@ -342,10 +347,10 @@ void loop() {
     masterCallUInt16(9, displayBuffer, 8);
   }
 
-  if (now - gyroTimer >= GYRO_PERIOD) {
-    gyroTimer = now;
-    masterCallInt16Array(12, 1, 1, gyro, 3);
-  }
+  //if (now - gyroTimer >= GYRO_PERIOD) {
+  //  gyroTimer = now;
+  //  masterCallInt16Array(12, 1, 1, gyro, 3);
+  //}
 
   // 2. TRANSMIT PART
   if (now - rfTimer >= RF_PERIOD) {

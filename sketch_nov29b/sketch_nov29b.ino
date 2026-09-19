@@ -128,7 +128,7 @@ void setup() {
   wdt_enable(WDTO_2S);
 
   Wire.begin();
-  Wire.setClock(400000); // use 200 kHz I2C
+  Wire.setClock(200000); // use 200 kHz I2C
   radio.begin();
 
   radio.setAutoAck(false);
